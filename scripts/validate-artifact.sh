@@ -26,6 +26,19 @@ import { pathToFileURL } from "node:url";
 const [workerPath, hostingPath] = process.argv.slice(2);
 JSON.parse(await readFile(hostingPath, "utf8"));
 
+const workerSource = await readFile(workerPath, "utf8");
+
+// Node cannot resolve Cloudflare's runtime-only `cloudflare:` protocol. When
+// the built worker uses D1/R2 bindings, validate its syntax plus the generated
+// Worker contract without importing it in the wrong runtime. The checkpoint
+// builder will execute the same bundle inside Cloudflare Workers.
+if (workerSource.includes('from "cloudflare:workers"')) {
+  if (!/async fetch\s*\(/.test(workerSource) || !/export\s*\{[^}]*as default\s*\}/s.test(workerSource)) {
+    throw new Error("Cloudflare Worker artifact must export a default object with fetch(request, env, ctx)");
+  }
+  process.exit(0);
+}
+
 const workerUrl = pathToFileURL(workerPath);
 workerUrl.searchParams.set("sites-validation", `${process.pid}-${Date.now()}`);
 const worker = await import(workerUrl.href);
