@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { AppShell } from "./app-shell";
 import { ActionForm, MeetingActions, MoodChoices, ProgressControl, ReminderToggle } from "./action-controls";
 import { entityDetailState, findEntityById } from "../../lib/ui-contract";
+import { createSessionFetch } from "../../lib/client/session-bootstrap";
 
 export type Workspace = "overview" | "meetings" | "goals" | "decisions" | "insights" | "settings";
 type Profile = { displayName: string; vision: string; values: string; constraints: string };
@@ -18,24 +19,16 @@ type LifeState = { profile: Profile; goals: Goal[]; meetings: Meeting[]; decisio
 
 const emptyState: LifeState = { profile: { displayName: "人生经营者", vision: "", values: "", constraints: "" }, goals: [], meetings: [], decisions: [], reminders: [] };
 
-function deviceId() {
-  const found = window.localStorage.getItem("lifeorg-device");
-  if (found) return found;
-  const created = crypto.randomUUID().replaceAll("-", "");
-  window.localStorage.setItem("lifeorg-device", created);
-  return created;
-}
+const protectedFetch = createSessionFetch();
 
 function useLifeState() {
   const [data, setData] = useState(emptyState);
   const [status, setStatus] = useState("正在连接个人经营记录…");
   const [notice, setNotice] = useState("");
-  const device = useRef("");
-
-  async function load(id: string) {
+  async function load() {
     setStatus("正在同步…");
     try {
-      const response = await fetch("/api/state", { headers: { "x-lifeorg-user": id } });
+      const response = await protectedFetch("/api/state");
       const result = await response.json() as { data?: LifeState; error?: string };
       if (!response.ok || !result.data) throw new Error(result.error || "读取失败");
       setData(result.data); setStatus("个人记录已同步"); setNotice("");
@@ -43,20 +36,19 @@ function useLifeState() {
   }
 
   useEffect(() => {
-    const id = deviceId(); device.current = id;
-    const timer = window.setTimeout(() => void load(id), 0);
+    const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, []);
 
   async function mutate(action: string, payload: Record<string, unknown>) {
     setStatus("正在保存…");
-    const response = await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json", "x-lifeorg-user": device.current }, body: JSON.stringify({ action, payload }) });
+    const response = await protectedFetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, payload }) });
     const result = await response.json() as { data?: LifeState; error?: string };
     if (!response.ok || !result.data) { setStatus("保存失败"); throw new Error(result.error || "保存失败"); }
     setData(result.data); setStatus("个人记录已同步");
     return result.data;
   }
-  return { data, status, notice, retry: () => void load(device.current), mutate };
+  return { data, status, notice, retry: () => void load(), mutate };
 }
 
 export function LifeOrgClient({ view }: { view: Workspace }) {
@@ -174,5 +166,52 @@ export function SettingsDetail({ tab }: { tab: "profile" | "agents" | "openai" }
       setStatus("个人经营章程已更新。所有后续会议都会以此作为边界。");
     } catch (error) { setStatus(error instanceof Error ? error.message : "章程保存失败，请重试。"); }
   }
-  return <AppShell section="settings" status={state.status}><div className="settings-grid"><article className="card constitution"><p className="section-kicker">ORGANIZATION SETTINGS</p><h2>{content[0]}</h2><p>{content[1]}</p>{tab === "profile" && state.status === "个人记录已同步" && <ActionForm onSubmit={(event) => void saveProfile(event)} submitLabel="更新个人经营章程"><label>你的称呼<input name="displayName" defaultValue={state.data.profile.displayName} /></label><label>长期愿景<textarea name="vision" defaultValue={state.data.profile.vision} /></label><label>核心价值<textarea name="values" defaultValue={state.data.profile.values} /></label><label>现实约束<textarea name="constraints" defaultValue={state.data.profile.constraints} /></label></ActionForm>}{tab === "agents" && <div className="team-list"><p><b>幕僚长：</b>检查材料完整性，组织评议并执行质量门禁。</p><p><b>战略架构师：</b>检查长期一致性、替代路径与机会成本。</p><p><b>运营执行官：</b>把批准的方向转成可开始、可排期、可验收的动作。</p><p><b>风险审计官：</b>寻找反证、认知偏差、不可逆风险和停止条件。</p></div>}{tab === "openai" && <><div className="ai-status">OpenAI 接口尚未配置；将在 Agent 内核层启用安全的服务端连接测试。</div><button data-action="retry" type="button" onClick={() => setStatus("OpenAI 尚未配置。Agent 内核层完成后，这里将测试服务端连接且绝不显示密钥。")}>测试服务端连接</button></>}{status && <p role="status">{status}</p>}</article><article className="card team-card"><nav aria-label="设置导航"><Link href="/settings/profile">个人章程</Link><br /><Link href="/settings/agents">Agent 团队</Link><br /><Link href="/settings/integrations/openai">OpenAI 集成</Link></nav></article></div></AppShell>;
+  return <AppShell section="settings" status={state.status}><div className="settings-grid"><article className="card constitution"><p className="section-kicker">ORGANIZATION SETTINGS</p><h2>{content[0]}</h2><p>{content[1]}</p>{tab === "profile" && state.status === "个人记录已同步" && <ActionForm onSubmit={(event) => void saveProfile(event)} submitLabel="更新个人经营章程"><label>你的称呼<input name="displayName" defaultValue={state.data.profile.displayName} /></label><label>长期愿景<textarea name="vision" defaultValue={state.data.profile.vision} /></label><label>核心价值<textarea name="values" defaultValue={state.data.profile.values} /></label><label>现实约束<textarea name="constraints" defaultValue={state.data.profile.constraints} /></label></ActionForm>}{tab === "agents" && <div className="team-list"><p><b>幕僚长：</b>检查材料完整性，组织评议并执行质量门禁。</p><p><b>战略架构师：</b>检查长期一致性、替代路径与机会成本。</p><p><b>运营执行官：</b>把批准的方向转成可开始、可排期、可验收的动作。</p><p><b>风险审计官：</b>寻找反证、认知偏差、不可逆风险和停止条件。</p></div>}{tab === "openai" && <OpenAIIntegrationPanel />}{status && <p role="status">{status}</p>}</article><article className="card team-card"><nav aria-label="设置导航"><Link href="/settings/profile">个人章程</Link><br /><Link href="/settings/agents">Agent 团队</Link><br /><Link href="/settings/integrations/openai">OpenAI 集成</Link></nav></article></div></AppShell>;
+}
+
+type OpenAIConnectionStatus = {
+  configured: boolean;
+  mode: "openai" | "structured_offline";
+  specialistModel: string;
+  chiefModel: string;
+};
+
+function OpenAIIntegrationPanel() {
+  const [connection, setConnection] = useState<OpenAIConnectionStatus | null>(null);
+  const [message, setMessage] = useState("正在读取服务端连接状态…");
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void protectedFetch("/api/integrations/openai/status").then(async (response) => {
+      const result = await response.json() as OpenAIConnectionStatus | { error?: string };
+      if (!active) return;
+      if (!response.ok || !("configured" in result)) throw new Error("无法读取 OpenAI 连接状态");
+      setConnection(result);
+      setMessage(result.configured ? "OpenAI 已连接。" : "当前为 structured_offline 模式；没有伪造 Agent 发言。");
+    }).catch(() => { if (active) setMessage("无法读取 OpenAI 连接状态，请稍后重试。"); });
+    return () => { active = false; };
+  }, []);
+
+  async function testConnection() {
+    setTesting(true);
+    setMessage("正在执行不保存内容的最小连接测试…");
+    try {
+      const response = await protectedFetch("/api/integrations/openai/test", { method: "POST" });
+      const result = await response.json() as { ok?: boolean; code?: string };
+      setMessage(result.ok ? "连接测试通过（connected）。" : `连接测试未通过（${result.code ?? "redacted_error"}）。`);
+    } catch { setMessage("连接测试失败（network_error）。"); }
+    finally { setTesting(false); }
+  }
+
+  return <div className="team-list">
+    <div className="ai-status">
+      <b>{connection?.configured ? "已连接" : "未连接 / 结构化离线"}</b>
+      <p>模式：{connection?.mode ?? "正在检查"}</p>
+      <p>专家模型：{connection?.specialistModel ?? "—"}</p>
+      <p>幕僚长模型：{connection?.chiefModel ?? "—"}</p>
+    </div>
+    <button data-action="retry" type="button" disabled={testing} onClick={() => void testConnection()}>{testing ? "正在测试…" : "测试服务端连接"}</button>
+    <p role="status">{message}</p>
+  </div>;
 }
