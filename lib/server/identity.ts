@@ -2,6 +2,7 @@ export type Identity = {
   userId: string;
   displayName: string;
   source: "sites" | "session";
+  sessionId?: string;
 };
 
 export type IdentityRuntime = {
@@ -10,6 +11,7 @@ export type IdentityRuntime = {
 };
 
 const cookieName = "lifeorg_session";
+const auditCookieName = "lifeorg_audit_session";
 
 export class IdentityError extends Error {
   readonly status = 401;
@@ -57,9 +59,16 @@ export async function createLocalSessionCookie(
   return `${cookieName}=${signed}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${options.secure ? "; Secure" : ""}`;
 }
 
-function cookieValue(request: Request) {
+export async function createAuditSessionCookie(sessionId: string, secret: string, options: { secure?: boolean } = {}) {
+  if (secret.length < 32) throw new Error("SESSION_SECRET must be at least 32 characters");
+  const payload = base64Url(new TextEncoder().encode(JSON.stringify({ sessionId, expiresAt: Date.now() + 30 * 86400000 })));
+  const signed = `${payload}.${await signature(payload, secret)}`;
+  return `${auditCookieName}=${signed}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${options.secure ? "; Secure" : ""}`;
+}
+
+function cookieValue(request: Request, name = cookieName) {
   const cookie = request.headers.get("cookie") ?? "";
-  return cookie.split(";").map((item) => item.trim()).find((item) => item.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
+  return cookie.split(";").map((item) => item.trim()).find((item) => item.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
 async function readSession(request: Request, secret?: string): Promise<Identity | null> {
@@ -74,6 +83,21 @@ async function readSession(request: Request, secret?: string): Promise<Identity 
     const parsed = JSON.parse(new TextDecoder().decode(fromBase64Url(payload))) as { userId?: unknown; displayName?: unknown; expiresAt?: unknown };
     if (typeof parsed.userId !== "string" || !parsed.userId.startsWith("local:") || typeof parsed.displayName !== "string" || typeof parsed.expiresAt !== "number" || parsed.expiresAt < Date.now()) return null;
     return { userId: parsed.userId, displayName: parsed.displayName, source: "session" };
+  } catch { return null; }
+}
+
+export async function readAuditSessionId(request: Request, secret?: string) {
+  const signed = cookieValue(request, auditCookieName);
+  if (!signed || !secret) return null;
+  const separator = signed.lastIndexOf(".");
+  if (separator < 1) return null;
+  const payload = signed.slice(0, separator);
+  const supplied = signed.slice(separator + 1);
+  if (!constantTimeEqual(supplied, await signature(payload, secret))) return null;
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(fromBase64Url(payload))) as { sessionId?: unknown; expiresAt?: unknown };
+    if (typeof parsed.sessionId !== "string" || !parsed.sessionId.startsWith("browser:") || typeof parsed.expiresAt !== "number" || parsed.expiresAt < Date.now()) return null;
+    return parsed.sessionId;
   } catch { return null; }
 }
 

@@ -22,6 +22,37 @@ export const CompletenessSchema = z.object({
   missingEvidence: z.array(z.string().min(1)).max(8),
 }).strict();
 
+export const MutationPreviewSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("goal.create"),
+    title: z.string().min(1).max(300),
+    domain: z.string().min(1).max(100),
+    horizon: z.string().min(1).max(100),
+    why: z.string().max(1200),
+    targetDate: z.string().min(1).nullable().optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("goal.update"),
+    goalId: z.number().int().positive(),
+    progress: z.number().int().min(0).max(100).optional(),
+    status: z.enum(["active", "paused", "completed"]).optional(),
+  }).strict().refine((value) => value.progress !== undefined || value.status !== undefined, "goal.update requires a change"),
+  z.object({
+    type: z.literal("decision.create"),
+    title: z.string().min(1).max(300),
+    options: z.array(z.string().min(1).max(300)).min(2).max(10),
+    choice: z.string().min(1).max(500),
+    reason: z.string().min(1).max(2000),
+    reviewAt: z.string().min(1).nullable().optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("decision.reviewOutcome"),
+    decisionId: z.number().int().positive(),
+    outcome: z.string().min(1).max(3000),
+    observedAt: z.string().min(1),
+  }).strict(),
+]);
+
 export const FinalRecommendationSchema = z.object({
   recommendation: z.string().min(8).max(240),
   evidence: z.array(z.object({
@@ -37,6 +68,7 @@ export const FinalRecommendationSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]),
   unknowns: z.array(z.string().min(1).max(300)).max(8),
   disagreements: z.array(z.string().min(1).max(500)).max(8),
+  mutationPreview: z.array(MutationPreviewSchema).max(3).optional(),
 }).strict();
 
 export const ChiefOutputSchema = z.discriminatedUnion("mode", [
@@ -82,4 +114,5 @@ export const MeetingTurnResponseSchema = z.discriminatedUnion("status", [
 export type EvidenceRecord = z.infer<typeof EvidenceRecordSchema>;
 export type AgentContribution = z.infer<typeof AgentContributionSchema>;
 export type FinalRecommendation = z.infer<typeof FinalRecommendationSchema>;
+export type MutationPreview = z.infer<typeof MutationPreviewSchema>;
 export type MeetingTurnResponse = z.infer<typeof MeetingTurnResponseSchema>;
