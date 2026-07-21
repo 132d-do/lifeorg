@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 
-import { createLocalSessionCookie, resolveIdentity } from "../lib/server/identity.ts";
+import { createAuditSessionCookie, createLocalSessionCookie, readAuditSessionId, resolveIdentity } from "../lib/server/identity.ts";
 import { createSessionFetch } from "../lib/client/session-bootstrap.ts";
 
 const secret = "a-development-secret-that-is-long-enough-for-tests";
@@ -33,6 +33,17 @@ test("local and preview accept only a valid signed HttpOnly SameSite=Lax cookie"
   assert.deepEqual(identity, { userId: "local:abc123", displayName: "本地 CEO", source: "session" });
   const tampered = cookie.replace(/lifeorg_session=([^.;]+)(.)/, (_match, prefix, last) => `lifeorg_session=${prefix}${last === "x" ? "y" : "x"}`);
   await assert.rejects(resolveIdentity(new Request("http://localhost/api/state", { headers: { cookie: tampered } }), { deployment: "preview", sessionSecret: secret }), (error) => error?.status === 401);
+});
+
+test("audit correlation uses a separate signed HttpOnly browser session", async () => {
+  const cookie = await createAuditSessionCookie("browser:session-123", secret, { secure: true });
+  assert.match(cookie, /^lifeorg_audit_session=/);
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /SameSite=Lax/i);
+  assert.match(cookie, /; Secure/i);
+  assert.equal(await readAuditSessionId(new Request("https://lifeorg.test/api/meetings/1/decision", { headers: { cookie } }), secret), "browser:session-123");
+  const tampered = cookie.replace(/lifeorg_audit_session=([^;]+)(?=;)/, (_match, value) => `lifeorg_audit_session=${value.slice(0, -1)}${value.endsWith("x") ? "y" : "x"}`);
+  assert.equal(await readAuditSessionId(new Request("https://lifeorg.test/api/meetings/1/decision", { headers: { cookie: tampered } }), secret), null);
 });
 
 test("session fetch bootstraps first protected call and permits one bootstrap plus one replay after a 401", async () => {

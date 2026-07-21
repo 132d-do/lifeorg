@@ -15,6 +15,27 @@
       "when": 1784547900012,
       "tag": "0001_guided_agent_governance",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784556278592,
+      "tag": "0002_guided_meeting_loop",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784558648245,
+      "tag": "0003_complete_guided_governance",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1784561353998,
+      "tag": "0004_harden_meeting_concurrency",
+      "breakpoints": true
     }
   ]
 }

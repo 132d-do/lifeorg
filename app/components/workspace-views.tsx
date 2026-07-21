@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { AppShell } from "./app-shell";
 import { ActionForm, MeetingActions, MoodChoices, ProgressControl, ReminderToggle } from "./action-controls";
 import { entityDetailState, findEntityById } from "../../lib/ui-contract";
 import { createSessionFetch } from "../../lib/client/session-bootstrap";
+import { classifyTurnResponse, clearPendingOperation, pendingOperation, readPendingOperation } from "../../lib/client/pending-operation";
 
 export type Workspace = "overview" | "meetings" | "goals" | "decisions" | "insights" | "settings";
 type Profile = { displayName: string; vision: string; values: string; constraints: string };
@@ -20,6 +21,15 @@ type LifeState = { profile: Profile; goals: Goal[]; meetings: Meeting[]; decisio
 const emptyState: LifeState = { profile: { displayName: "人生经营者", vision: "", values: "", constraints: "" }, goals: [], meetings: [], decisions: [], reminders: [] };
 
 const protectedFetch = createSessionFetch();
+
+function meetingApprovalKey(meetingId: string) {
+  const storageKey = `lifeorg:meeting:${meetingId}:approval-key`;
+  const prior = window.sessionStorage.getItem(storageKey);
+  if (prior) return prior;
+  const created = crypto.randomUUID();
+  window.sessionStorage.setItem(storageKey, created);
+  return created;
+}
 
 function useLifeState() {
   const [data, setData] = useState(emptyState);
@@ -135,23 +145,37 @@ export function EntityDetail({ kind, id, review = false }: { kind: "goal" | "dec
 }
 
 export function MeetingIntake({ kind }: { kind: string }) {
+  // Governed replacement for the legacy baseline call: await state.mutate("meeting.create", ...)
   const state = useLifeState();
   const router = useRouter();
+  const [selectedEvidence, setSelectedEvidence] = useState(() => new Set(["profile:self"]));
+  const evidenceOptions = [
+    { key: "profile:self", type: "profile", id: "self", title: "个人经营章程" },
+    ...state.data.goals.map((item) => ({ key: `goal:${item.id}`, type: "goal", id: String(item.id), title: `目标：${item.title}` })),
+    ...state.data.decisions.map((item) => ({ key: `decision:${item.id}`, type: "decision", id: String(item.id), title: `决策：${item.title}` })),
+    ...state.data.meetings.slice(0, 8).map((item) => ({ key: `meeting:${item.id}`, type: "meeting", id: String(item.id), title: `会议：${item.title}` })),
+  ];
   const [mood, setMood] = useState("平稳"); const [status, setStatus] = useState("");
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const topic = String(form.get("topic") || "");
     const energy = Number(form.get("energy") || 7);
+    const operationKey = `lifeorg:meeting:create:${kind}`;
     try {
-      const updated = await state.mutate("meeting.create", { type: kind, summary: topic, energy, mood, inputs: { topic, energy, mood }, agentOutput: {} });
-      const created = updated.meetings[0];
-      if (!created) throw new Error("会议已保存，但暂时无法读取会议编号。");
+      const prior = readPendingOperation<Record<string, unknown>>(window.sessionStorage, operationKey);
+      const evidence = evidenceOptions.filter((option) => selectedEvidence.has(option.key)).map(({ type, id }) => ({ type, id }));
+      if (!prior && evidence.length < 2) { setStatus("请至少选择两条不同的真实记录（个人章程加一项目标、决策或历史会议）。"); return; }
+      const operation = pendingOperation(window.sessionStorage, operationKey, { kind, topic, intake: { message: topic, energy, mood }, evidence });
+      const response = await protectedFetch("/api/meetings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...operation.payload, clientRequestId: operation.id }) });
+      const created = await response.json() as { meetingId?: string; error?: string };
+      if (!response.ok || !created.meetingId) { if ([400, 409, 422].includes(response.status)) clearPendingOperation(window.sessionStorage, operationKey, operation.id); throw new Error(created.error || "会议创建失败。"); }
+      clearPendingOperation(window.sessionStorage, operationKey, operation.id);
       setStatus("会议已创建，正在进入会议室。");
-      router.push(`/meetings/${created.id}`);
+      router.push(`/meetings/${created.meetingId}`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "会议创建失败，请重试。"); }
   }
-  return <AppShell section="meetings" status={state.status}><article className="card section-card"><p className="section-kicker">GUIDED MEETING · {kind.toUpperCase()}</p><h2>准备会议材料</h2><p>当前版本会先归档会议主题；下一层 Agent 内核上线后，幕僚长将在会议室检查证据并追问。</p><ActionForm onSubmit={(event) => void create(event)} submitLabel="创建会议并进入会议室"><label>需要解决的问题<textarea required name="topic" /></label><label>当前精力<input data-action="progress" name="energy" type="range" min="1" max="10" defaultValue="7" /></label><MoodChoices value={mood} onChange={setMood} /></ActionForm>{status && <p role="status">{status}</p>}</article></AppShell>;
+  return <AppShell section="meetings" status={state.status}><article className="card section-card"><p className="section-kicker">GUIDED MEETING · {kind.toUpperCase()}</p><h2>准备会议材料</h2><p>选择真正相关的记录；幕僚长只会引用这些归属于你的证据。</p><ActionForm onSubmit={(event) => void create(event)} submitLabel="创建会议并进入会议室"><label>需要解决的问题<textarea required name="topic" /></label><fieldset><legend>相关 LifeOrg 记录</legend><div className="evidence-picker">{evidenceOptions.map((option) => <label key={option.key}><input type="checkbox" checked={selectedEvidence.has(option.key)} disabled={option.key === "profile:self"} onChange={(event) => setSelectedEvidence((current) => { const next = new Set(current); if (event.target.checked) next.add(option.key); else next.delete(option.key); return next; })} />{option.title}</label>)}</div></fieldset><label>当前精力<input data-action="progress" name="energy" type="range" min="1" max="10" defaultValue="7" /></label><MoodChoices value={mood} onChange={setMood} /></ActionForm>{status && <p role="status">{status}</p>}</article></AppShell>;
 }
 
 export function SettingsDetail({ tab }: { tab: "profile" | "agents" | "openai" }) {
@@ -167,6 +191,131 @@ export function SettingsDetail({ tab }: { tab: "profile" | "agents" | "openai" }
     } catch (error) { setStatus(error instanceof Error ? error.message : "章程保存失败，请重试。"); }
   }
   return <AppShell section="settings" status={state.status}><div className="settings-grid"><article className="card constitution"><p className="section-kicker">ORGANIZATION SETTINGS</p><h2>{content[0]}</h2><p>{content[1]}</p>{tab === "profile" && state.status === "个人记录已同步" && <ActionForm onSubmit={(event) => void saveProfile(event)} submitLabel="更新个人经营章程"><label>你的称呼<input name="displayName" defaultValue={state.data.profile.displayName} /></label><label>长期愿景<textarea name="vision" defaultValue={state.data.profile.vision} /></label><label>核心价值<textarea name="values" defaultValue={state.data.profile.values} /></label><label>现实约束<textarea name="constraints" defaultValue={state.data.profile.constraints} /></label></ActionForm>}{tab === "agents" && <div className="team-list"><p><b>幕僚长：</b>检查材料完整性，组织评议并执行质量门禁。</p><p><b>战略架构师：</b>检查长期一致性、替代路径与机会成本。</p><p><b>运营执行官：</b>把批准的方向转成可开始、可排期、可验收的动作。</p><p><b>风险审计官：</b>寻找反证、认知偏差、不可逆风险和停止条件。</p></div>}{tab === "openai" && <OpenAIIntegrationPanel />}{status && <p role="status">{status}</p>}</article><article className="card team-card"><nav aria-label="设置导航"><Link href="/settings/profile">个人章程</Link><br /><Link href="/settings/agents">Agent 团队</Link><br /><Link href="/settings/integrations/openai">OpenAI 集成</Link></nav></article></div></AppShell>;
+}
+
+type GuidedTurn =
+  | { status: "needs_input"; question: string; missingEvidence: string[] }
+  | { status: "deliberating"; contributions: Array<{ role: string; conclusion: string; evidenceIds: string[]; uncertainty: string; disagreements: string[] }> }
+  | { status: "ready"; recommendation: GuidedRecommendation }
+  | { status: "offline"; mode: "structured_offline"; reason: string; canRetry: true };
+type GuidedRecommendation = {
+  recommendation: string; evidence: Array<{ recordId: string; claim: string }>; deferredAlternative: string;
+  nextAction: string; nextActionWindowHours: number; deadlineOrReviewAt: string; successCriterion: string;
+  stopOrAdjustCondition: string; confidence: string; unknowns: string[]; disagreements: string[];
+  mutationPreview?: Array<Record<string, unknown>>;
+};
+type GuidedRoom = {
+  id: string; clientRequestId: string; topic: string; kind: string; lifecycle: { status: string; phase: string; approvalStatus: string };
+  records: Array<{ id: string; title: string; summary: string }>; messages: Array<{ id: string; role: string; content: unknown; createdAt: string }>;
+  recommendation?: GuidedRecommendation; legacyInputs?: Record<string, unknown>; legacyAgentOutput?: Record<string, unknown>; mutationHash?: string;
+  decisionHistory: Array<{ id: string; action: string; recommendationSnapshot: GuidedRecommendation; createdAt: string }>;
+};
+
+export function GuidedMeetingRoom({ id }: { id: string }) {
+  const [room, setRoom] = useState<GuidedRoom | null>(null);
+  const [turn, setTurn] = useState<GuidedTurn | null>(null);
+  const [message, setMessage] = useState("");
+  const [lastMessage, setLastMessage] = useState("");
+  const [lastTurnId, setLastTurnId] = useState("");
+  const [hasPendingTurn, setHasPendingTurn] = useState(false);
+  const [status, setStatus] = useState("正在恢复会议记录…");
+  const [pending, setPending] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editedAdvice, setEditedAdvice] = useState("");
+
+  const load = useCallback(async () => {
+    const response = await protectedFetch(`/api/meetings/${encodeURIComponent(id)}`);
+    const result = await response.json() as { meeting?: GuidedRoom; error?: string };
+    if (!response.ok || !result.meeting) throw new Error(result.error || "无法读取会议");
+    setRoom(result.meeting); setEditedAdvice(result.meeting.recommendation?.recommendation ?? ""); setStatus("会议记录已恢复");
+  }, [id]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load().then(() => {
+      const prior = readPendingOperation<{ message: string; retryOf?: string }>(window.sessionStorage, `lifeorg:meeting:${id}:pending-turn`);
+      if (prior) { setMessage(prior.payload.message); setLastMessage(prior.payload.message); setLastTurnId(prior.id); setHasPendingTurn(true); setStatus("检测到上次未确认的发言；再次提交会复用同一请求，不会重复运行 Agent。"); }
+    }).catch((error) => setStatus(error instanceof Error ? error.message : "读取失败")), 0);
+    return () => window.clearTimeout(timer);
+  }, [id, load]);
+
+  async function sendTurn(text: string, retryOf?: string) {
+    if (!text.trim()) return;
+    setPending(true); setStatus("四名 Agent 正在按治理顺序处理材料…");
+    const operationKey = `lifeorg:meeting:${id}:pending-turn`;
+    const operation = pendingOperation(window.sessionStorage, operationKey, { message: text.trim(), ...(retryOf ? { retryOf } : {}) });
+    setHasPendingTurn(true);
+    try {
+      const response = await protectedFetch(`/api/meetings/${encodeURIComponent(id)}/turns`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...operation.payload, clientTurnId: operation.id }) });
+      const result = await response.json() as GuidedTurn & { error?: string };
+      const classification = classifyTurnResponse(response.ok, response.status, result);
+      if (classification.kind === "offline") {
+        clearPendingOperation(window.sessionStorage, operationKey, operation.id); setHasPendingTurn(false);
+        setTurn(result); setLastMessage(operation.payload.message); setLastTurnId(operation.id); setMessage("");
+        setStatus("结构化离线模式：本轮已结束且没有虚构 Agent 发言；重试会创建一个新的可追踪轮次。");
+        await load(); return;
+      }
+      if (classification.kind === "error") { if (classification.definitive) { clearPendingOperation(window.sessionStorage, operationKey, operation.id); setHasPendingTurn(false); } throw new Error(result.error || (response.status === 409 ? "本轮仍在处理中，请稍后用同一发言重试。" : "本轮处理失败")); }
+      clearPendingOperation(window.sessionStorage, operationKey, operation.id); setHasPendingTurn(false);
+      setTurn(result); setLastMessage(operation.payload.message); setLastTurnId(operation.id); setMessage("");
+      if (result.status === "needs_input") setStatus("幕僚长还缺一条关键证据。");
+      else if (result.status === "deliberating") setStatus("三名专家已完成有边界的评议。");
+      else setStatus("具体建议已就绪，等待 CEO 批准、编辑或否决。");
+      await load();
+    } catch (error) { setStatus(error instanceof Error ? error.message : "本轮处理失败"); }
+    finally { setPending(false); }
+  }
+
+  async function decide(action: "approve" | "edit" | "reject") {
+    if (!room?.recommendation) return;
+    setPending(true);
+    const payload = action === "approve" ? { action, idempotencyKey: meetingApprovalKey(id), mutationHash: room.mutationHash }
+      : action === "edit" ? { action, idempotencyKey: crypto.randomUUID(), recommendation: { ...room.recommendation, recommendation: editedAdvice } }
+      : { action, idempotencyKey: crypto.randomUUID() };
+    try {
+      const response = await protectedFetch(`/api/meetings/${encodeURIComponent(id)}/decision`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const result = await response.json() as { status?: string; error?: string };
+      if (!response.ok) throw new Error(result.error || "处理决定失败");
+      setStatus(action === "approve" ? "已原子提交批准的变更。" : action === "edit" ? "修改稿已保存，尚未改变任何经营记录。" : "建议已否决，没有改变任何经营记录。");
+      setEditing(false); await load();
+    } catch (error) { setStatus(error instanceof Error ? error.message : "处理决定失败"); }
+    finally { setPending(false); }
+  }
+
+  const recommendation = room?.recommendation ?? (turn?.status === "ready" ? turn.recommendation : undefined);
+  const canDecide = room?.lifecycle.status === "ready" && room.lifecycle.approvalStatus === "pending";
+  if (room?.clientRequestId === "legacy") return <AppShell section="meetings" status={status}><div className="content-stack guided-room">
+    <section className="card section-card"><p className="section-kicker">LEGACY MEETING ARCHIVE</p><h2>{room.topic}</h2><p>这是升级前保存的会议档案。原始材料和当时的 Agent 结果会保留展示，但旧会议不会伪装成满足新证据门禁的四 Agent 讨论。</p></section>
+    <section className="card section-card"><h3>原始会议材料</h3><pre>{JSON.stringify(room.legacyInputs ?? {}, null, 2)}</pre></section>
+    <section className="card section-card"><h3>历史 Agent 输出</h3><pre>{JSON.stringify(room.legacyAgentOutput ?? {}, null, 2)}</pre></section>
+    <section className="card section-card"><h3>用当前治理流程继续</h3><p>重新召集时，你可以选择至少两条真实目标、决策或个人章程记录作为证据。</p><Link className="primary-button" href={`/meetings/new/${room.kind}`}>用新证据重新召集</Link></section>
+  </div></AppShell>;
+  return <AppShell section="meetings" status={status}><div className="content-stack guided-room">
+    <section className="card section-card"><p className="section-kicker">GUIDED MEETING · {room?.kind?.toUpperCase() ?? "LOADING"}</p><h2>{room?.topic ?? "正在恢复会议"}</h2><p>阶段：{room?.lifecycle.phase ?? "intake"} · 审批：{room?.lifecycle.approvalStatus ?? "pending"}</p></section>
+    <section className="card section-card"><h3>本次采用的真实记录</h3><div className="evidence-list">{room?.records.map((record) => <article key={record.id}><b>{record.id} · {record.title}</b><p>{record.summary}</p></article>)}</div></section>
+    <section className="card section-card" aria-live="polite"><h3>会议讨论</h3>{turn?.status === "needs_input" && <div className="agent-note"><b>幕僚长只追问一个问题：</b><p>{turn.question}</p><small>缺失：{turn.missingEvidence.join("、")}</small></div>}{turn?.status === "deliberating" && <div className="agent-grid">{turn.contributions.map((item) => <article key={item.role}><span>{item.role}</span><p>{item.conclusion}</p><small>依据：{item.evidenceIds.join("、")} · 未知：{item.uncertainty}</small></article>)}</div>}{turn?.status === "offline" && <div className="notice" role="alert">结构化离线模式：服务暂不可用；你仍可记录个人判断，但这里不会显示虚构的 Agent 发言。</div>}
+      {room?.lifecycle.status !== "approved" && <form className="meeting-form" onSubmit={(event) => { event.preventDefault(); void sendTurn(message); }}><label>回复幕僚长或补充证据<textarea value={message} onChange={(event) => setMessage(event.target.value)} required /></label><button data-action="send-turn" className="primary-button" type="submit" disabled={pending || !message.trim()}>{pending ? "处理中…" : hasPendingTurn ? "重试未确认的同一轮" : "提交本轮"}</button>{turn?.status === "offline" && <button data-action="retry" type="button" disabled={pending} onClick={() => void sendTurn(lastMessage, lastTurnId)}>重试同一轮</button>}</form>}
+    </section>
+    {recommendation && <section className="card section-card recommendation"><p className="section-kicker">CEO DECISION</p><h2>{recommendation.recommendation}</h2><h3>证据</h3><ul>{recommendation.evidence.map((item) => <li key={`${item.recordId}-${item.claim}`}>{item.recordId}：{item.claim}</li>)}</ul><dl><div><dt>暂缓方案</dt><dd>{recommendation.deferredAlternative}</dd></div><div><dt>24–48 小时下一步</dt><dd>{recommendation.nextAction}</dd></div><div><dt>截止/复查</dt><dd>{recommendation.deadlineOrReviewAt}</dd></div><div><dt>成功标准</dt><dd>{recommendation.successCriterion}</dd></div><div><dt>停止/调整条件</dt><dd>{recommendation.stopOrAdjustCondition}</dd></div><div><dt>信心与未知</dt><dd>{recommendation.confidence} · {recommendation.unknowns.join("；") || "无"}</dd></div><div><dt>Agent 分歧</dt><dd>{recommendation.disagreements.join("；") || "无"}</dd></div></dl><h3>批准后才会执行的变更</h3><pre>{JSON.stringify(recommendation.mutationPreview ?? [], null, 2)}</pre>{canDecide && editing && <label>编辑一句话建议<textarea value={editedAdvice} onChange={(event) => setEditedAdvice(event.target.value)} /></label>}{canDecide && <div className="meeting-actions"><button data-action="edit" type="button" disabled={pending} onClick={() => setEditing((value) => !value)}>编辑</button>{editing && <button data-action="edit" type="button" disabled={pending} onClick={() => void decide("edit")}>保存修改稿</button>}<button data-action="reject" type="button" disabled={pending} onClick={() => void decide("reject")}>否决</button><button data-action="approve" className="primary-button" type="button" disabled={pending || !room?.mutationHash} onClick={() => void decide("approve")}>批准并提交</button></div>}{room?.lifecycle.status === "approved" && <div className="notice" role="status">建议已批准并归档，相关变更已按预览提交。</div>}{room?.lifecycle.status === "draft" && room.decisionHistory.some((event) => event.action === "reject") && <div className="notice" role="status">建议已否决，没有改变经营记录。你可以在上方补充材料，开启新一轮评议。</div>}</section>}
+    <section className="card section-card"><h3>可恢复的会议历史</h3>{room && <div className="message-history">{room.messages.map((item) => <article key={item.id} className={`message ${item.role}`}><b>{item.role === "user" ? "CEO" : item.role}</b><pre>{JSON.stringify(item.content, null, 2)}</pre></article>)}</div>}{room?.decisionHistory?.map((event) => <p className="agent-note" key={event.id}>已记录 {event.action}；原建议快照仍保留：{event.recommendationSnapshot.recommendation}</p>)}</section>
+    <p role="status">{status}</p>
+  </div></AppShell>;
+}
+
+export function DecisionOutcomeReview({ id }: { id: string }) {
+  const state = useLifeState(); const router = useRouter(); const [status, setStatus] = useState("");
+  const decision = findEntityById(state.data.decisions, id);
+  async function launch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!decision) return;
+    const form = new FormData(event.currentTarget); const outcome = String(form.get("outcome") || ""); const observedAt = String(form.get("observedAt") || "");
+    const clientRequestId = crypto.randomUUID();
+    const topic = `复盘决策「${decision.title}」的实际结果；仅在批准后追加 decision.reviewOutcome：${outcome}（observedAt=${observedAt}）`;
+    try {
+      const lockedMutationIntent = { type: "decision.reviewOutcome", decisionId: Number(id), outcome, observedAt } as const;
+      const response = await protectedFetch("/api/meetings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientRequestId, kind: "decision", topic, intake: { message: topic }, evidence: [{ type: "profile", id: "self" }, { type: "decision", id }], lockedMutationIntent }) });
+      const result = await response.json() as { meetingId?: string; error?: string }; if (!response.ok || !result.meetingId) throw new Error(result.error || "无法创建复盘会议");
+      router.push(`/meetings/${result.meetingId}`);
+    } catch (error) { setStatus(error instanceof Error ? error.message : "无法创建复盘会议"); }
+  }
+  return <AppShell section="decisions" status={state.status}><article className="card section-card"><p className="section-kicker">IMMUTABLE OUTCOME REVIEW</p><h2>{decision?.title ?? "正在读取决策"}</h2><p>原始选择与理由不会被改写；会议形成的 outcome 只会在你批准精确预览后追加。</p>{decision && <ActionForm onSubmit={(event) => void launch(event)} submitLabel="召集决策复盘会"><label>实际结果<textarea required name="outcome" /></label><label>观察日期<input required type="date" name="observedAt" /></label></ActionForm>}{status && <p role="alert">{status}</p>}</article></AppShell>;
 }
 
 type OpenAIConnectionStatus = {
