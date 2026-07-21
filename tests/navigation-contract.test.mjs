@@ -139,13 +139,14 @@ test("operational affordances use named semantic controls with visible feedback"
   assert.doesNotMatch(controls, /<span[^>]+onClick=/);
 });
 
-test("baseline editor operations persist and every temporary integration action reports an outcome", () => {
+test("baseline editor operations persist and the OpenAI integration reports real outcomes", () => {
   const views = source("app/components/workspace-views.tsx");
   for (const action of ["goal.create", "decision.create", "meeting.create", "profile.update"]) {
     assert.match(views, new RegExp(`await state\\.mutate\\([\"']${action.replace(".", "\\.")}[\"']`), `${action} is not persisted`);
   }
   assert.match(views, /useRouter\(\)/);
   assert.match(views, /router\.push\(`\/meetings\/\$\{[^}]+\}`\)/);
-  assert.match(views, /OpenAI[^\n]+(?:尚未配置|将在 Agent 内核层启用)/);
-  assert.match(views, /setStatus\(["'][^"']*(?:尚未配置|将在 Agent 内核层启用)[^"']*["']\)/);
+  assert.match(views, /protectedFetch\(["']\/api\/integrations\/openai\/status["']/);
+  assert.match(views, /protectedFetch\(["']\/api\/integrations\/openai\/test["']/);
+  assert.match(views, /setMessage\([^)]*(?:connected|network_error|redacted_error)/);
 });

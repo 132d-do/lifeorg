@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const createdAt = () =>
   text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`);
@@ -38,8 +38,30 @@ export const meetings = sqliteTable("meetings", {
   inputs: text("inputs").notNull().default("{}"),
   summary: text("summary").notNull().default(""),
   agentOutput: text("agent_output").notNull().default("{}"),
+  clientRequestId: text("client_request_id"),
+  lifecycleStatus: text("lifecycle_status").notNull().default("draft"),
+  topic: text("topic").notNull().default(""),
+  phase: text("phase").notNull().default("intake"),
+  finalRecommendation: text("final_recommendation").notNull().default("{}"),
+  approvalStatus: text("approval_status").notNull().default("pending"),
   createdAt: createdAt(),
-});
+  updatedAt: text("updated_at").notNull().default(""),
+}, (table) => [
+  uniqueIndex("meetings_user_client_request_unique").on(table.userId, table.clientRequestId),
+]);
+
+export const meetingMessages = sqliteTable("meeting_messages", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  meetingId: integer("meeting_id").notNull(),
+  turnNumber: integer("turn_number").notNull(),
+  role: text("role").notNull(),
+  structuredContent: text("structured_content").notNull().default("{}"),
+  modelMetadata: text("model_metadata").notNull().default("{}"),
+  createdAt: createdAt(),
+}, (table) => [
+  uniqueIndex("meeting_messages_meeting_turn_role_unique").on(table.meetingId, table.turnNumber, table.role),
+]);
 
 export const decisions = sqliteTable("decisions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
