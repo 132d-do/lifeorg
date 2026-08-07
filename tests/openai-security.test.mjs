@@ -68,3 +68,12 @@ test("source and build artifacts contain no configured secret sentinel", () => {
   for (const root of roots) visit(fileURLToPath(new URL(`../${root}`, import.meta.url)));
   for (const file of files) assert.equal(readFileSync(file).includes(sentinel), false, `secret leaked in ${file}`);
 });
+
+test("private observability code cannot accept prompts, evidence, or personal notes", () => {
+  const metadata = readFileSync(new URL("../lib/server/observability/agent-run-metadata.ts", import.meta.url), "utf8");
+  assert.match(metadata, /\.strict\(\)/);
+  for (const forbidden of ["topic:", "prompt:", "response:", "note:", "evidence:", "credential:", "email:"]) {
+    assert.equal(metadata.includes(forbidden), false, `telemetry exposes ${forbidden}`);
+  }
+  assert.doesNotMatch(metadata, /console\.(?:log|error|warn)/);
+});

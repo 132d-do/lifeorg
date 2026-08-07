@@ -2,7 +2,7 @@ import { z } from "zod";
 import { FinalRecommendationSchema, MutationPreviewSchema } from "../agents/schemas.ts";
 
 const EvidenceReferenceSchema = z.object({
-  type: z.enum(["profile", "goal", "meeting", "decision"]),
+  type: z.enum(["profile", "goal", "meeting", "decision", "evidence"]),
   id: z.string().min(1).max(100),
 }).strict();
 

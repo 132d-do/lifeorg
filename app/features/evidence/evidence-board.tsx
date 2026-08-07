@@ -3,8 +3,8 @@
 export type EvidenceItem = {
   id: string;
   title: string;
-  verification: "record_backed" | "user_reported" | "unverified";
-  kind: "profile" | "goal" | "decision" | "meeting";
+  verification: "record_backed" | "user_confirmed" | "unverified";
+  kind: "profile" | "goal" | "decision" | "meeting" | "fact" | "preference" | "assumption" | "unknown" | "alternative" | "historical_analogue";
   summary?: string;
   locked?: boolean;
 };
@@ -14,11 +14,17 @@ const kindLabels: Record<EvidenceItem["kind"], string> = {
   goal: "目标",
   decision: "历史决策",
   meeting: "会议记录",
+  fact: "事实",
+  preference: "偏好",
+  assumption: "假设",
+  unknown: "未知",
+  alternative: "替代方案",
+  historical_analogue: "历史类比",
 };
 
 const verificationLabels: Record<EvidenceItem["verification"], string> = {
   record_backed: "LifeOrg 记录可核验",
-  user_reported: "用户陈述",
+  user_confirmed: "用户已确认",
   unverified: "尚未核验",
 };
 

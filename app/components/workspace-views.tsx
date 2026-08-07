@@ -96,6 +96,37 @@ export function EntityEditor({ kind }: { kind: "goal" | "decision" }) {
   return <AppShell section={section} status={state.status}><article className="card section-card"><p className="section-kicker">INTAKE</p><h2>{title}</h2><ActionForm onSubmit={(event) => void submit(event)} submitLabel={kind === "goal" ? "加入目标组合" : "签署并保存决策"}><label>主题<input required name="title" /></label>{kind === "goal" ? <><label>领域<select name="domain" defaultValue="成长"><option>科研</option><option>事业</option><option>成长</option><option>健康</option><option>关系</option><option>生活</option></select></label><label>周期<select name="horizon" defaultValue="季度"><option>月度</option><option>季度</option><option>年度</option><option>长期</option></select></label></> : <><label>可选方案（每行一个）<textarea name="options" /></label><label>最终选择<input required name="choice" /></label></>}<label>{kind === "goal" ? "为什么值得投入？" : "证据、权衡与不确定性"}<textarea name="reason" /></label></ActionForm>{saved && <p role="status">{saved}</p>}</article></AppShell>;
 }
 
+type DecisionEvidenceItem = { id: string; kind: string; title: string; content: string; verification: string };
+
+function DecisionEvidencePanel({ decisionId }: { decisionId: string }) {
+  const [items, setItems] = useState<DecisionEvidenceItem[]>([]);
+  const [status, setStatus] = useState("");
+  const [kind, setKind] = useState("fact");
+  const load = useCallback(async () => {
+    const response = await protectedFetch(`/api/decisions/${decisionId}/evidence`);
+    const body = await response.json() as { groups?: Record<string, DecisionEvidenceItem[]>; error?: string };
+    if (!response.ok) throw new Error(body.error || "无法读取证据");
+    setItems(Object.values(body.groups ?? {}).flat());
+  }, [decisionId]);
+  useEffect(() => { const timer = window.setTimeout(() => void load().catch(() => setStatus("证据读取失败")), 0); return () => window.clearTimeout(timer); }, [load]);
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const verification = kind === "preference" && form.get("confirmed") ? "user_confirmed" : "unverified";
+    const response = await protectedFetch(`/api/decisions/${decisionId}/evidence`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientRequestId: crypto.randomUUID(), kind, title: String(form.get("title") || ""), content: String(form.get("content") || ""), verification, source: null }),
+    });
+    const body = await response.json() as { error?: string };
+    if (!response.ok) { setStatus(body.error || "证据保存失败"); return; }
+    event.currentTarget.reset(); setStatus("证据已保存，可在下一场会议中选择。"); await load();
+  }
+  return <section className="card section-card"><p className="section-kicker">EVIDENCE BOARD</p><h2>事实、偏好、假设与未知</h2><p>这些条目不会自动变成结论；会议会保留类型和核验状态。</p>
+    <div className="team-list">{items.map((item) => <article key={item.id}><b>{item.title}</b><p>{item.content}</p><small>{item.kind} · {item.verification}</small></article>)}</div>
+    <form className="meeting-form" onSubmit={(event) => void create(event)}><label>类型<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="fact">事实</option><option value="preference">偏好</option><option value="assumption">假设</option><option value="unknown">未知</option><option value="alternative">替代方案</option><option value="historical_analogue">历史类比</option></select></label><label>标题<input required minLength={3} name="title" /></label><label>内容<textarea required minLength={3} name="content" /></label>{kind === "preference" && <label><input type="checkbox" name="confirmed" />这是我本人确认的偏好</label>}<button type="submit">保存到证据板</button></form>{status && <p role="status">{status}</p>}
+  </section>;
+}
+
 export function EntityDetail({ kind, id, review = false }: { kind: "goal" | "decision" | "meeting"; id: string; review?: boolean }) {
   const state = useLifeState();
   const section = kind === "goal" ? "goals" : kind === "decision" ? "decisions" : "meetings";
@@ -106,7 +137,7 @@ export function EntityDetail({ kind, id, review = false }: { kind: "goal" | "dec
   const record = goalRecord ?? decisionRecord ?? meetingRecord;
   const detailView = entityDetailState(state.status, state.notice, record);
   const detail = goalRecord ? `${goalRecord.domain} · ${goalRecord.horizon} · 进度 ${goalRecord.progress}%\n${goalRecord.why || "尚未记录投入理由。"}` : decisionRecord ? `当时选择：${decisionRecord.choice}\n${decisionRecord.reason || "尚未记录证据和权衡。"}` : meetingRecord ? `${meetingRecord.summary}\n${meetingRecord.energy ? `当时精力：${meetingRecord.energy}/10` : "未记录精力"}${meetingRecord.mood ? ` · ${meetingRecord.mood}` : ""}` : "";
-  return <AppShell section={section} status={state.status}>{detailView.kind === "error" && <div className="notice" role="alert"><span>{detailView.message}</span><button data-action="retry" type="button" onClick={state.retry}>重新读取</button></div>}<article className="card section-card"><p className="section-kicker">{kind.toUpperCase()} · {id}</p>{detailView.kind === "ready" ? <><h2>{record?.title}</h2><p style={{ whiteSpace: "pre-line" }}>{detail}</p></> : <><h2>{detailView.message}</h2><p>{detailView.kind === "error" ? "请检查连接后重试；我们不会用占位内容冒充真实记录。" : "页面会根据 URL 中的编号读取对应的个人经营记录。"}</p></>}{detailView.kind === "ready" && (review ? <ActionForm onSubmit={(event) => { event.preventDefault(); setStatus("复盘 API 将在引导会议层启用；当前内容尚未写入云端记录。"); }} submitLabel="预览复盘材料"><label>实际结果<textarea required name="outcome" /></label><label>观察日期<input required type="date" name="observedAt" /></label></ActionForm> : <MeetingActions onAnalyze={() => setStatus("Agent 内核尚未启用，当前没有发起真实评议。") } onReject={() => setStatus("当前页面没有可否决的正式建议。") } onApprove={() => setStatus("当前仅为交互预览，没有变更写入经营记录。") } />)}{status && <p role="status">{status}</p>}</article></AppShell>;
+  return <AppShell section={section} status={state.status}><div className="content-stack">{detailView.kind === "error" && <div className="notice" role="alert"><span>{detailView.message}</span><button data-action="retry" type="button" onClick={state.retry}>重新读取</button></div>}<article className="card section-card"><p className="section-kicker">{kind.toUpperCase()} · {id}</p>{detailView.kind === "ready" ? <><h2>{record?.title}</h2><p style={{ whiteSpace: "pre-line" }}>{detail}</p></> : <><h2>{detailView.message}</h2><p>{detailView.kind === "error" ? "请检查连接后重试；我们不会用占位内容冒充真实记录。" : "页面会根据 URL 中的编号读取对应的个人经营记录。"}</p></>}{detailView.kind === "ready" && (review ? <ActionForm onSubmit={(event) => { event.preventDefault(); setStatus("复盘 API 将在引导会议层启用；当前内容尚未写入云端记录。"); }} submitLabel="预览复盘材料"><label>实际结果<textarea required name="outcome" /></label><label>观察日期<input required type="date" name="observedAt" /></label></ActionForm> : <MeetingActions onAnalyze={() => setStatus("请从会议中心召集有证据的正式评议。") } onReject={() => setStatus("当前记录没有待否决的正式建议。") } onApprove={() => setStatus("当前记录没有待批准的正式建议。") } />)}{status && <p role="status">{status}</p>}</article>{decisionRecord && detailView.kind === "ready" && <DecisionEvidencePanel decisionId={id} />}</div></AppShell>;
 }
 
 export function MeetingIntake({ kind }: { kind: string }) {

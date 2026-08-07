@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AppShell } from "../../components/app-shell";
 import { ActionForm, MoodChoices } from "../../components/action-controls";
 import { clearPendingOperation, pendingOperation, readPendingOperation } from "../../../lib/client/pending-operation";
@@ -17,13 +17,33 @@ export function MeetingIntake({ kind }: { kind: string }) {
   const [mood, setMood] = useState("平稳");
   const [status, setStatus] = useState("");
   const [explicitDepth, setExplicitDepth] = useState<"fast" | "deep">(kind === "decision" || kind === "monthly" ? "deep" : "fast");
+  const [typedEvidence, setTypedEvidence] = useState<EvidenceItem[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTypedEvidence() {
+      const groups = await Promise.all(state.data.decisions.map(async (decision) => {
+        const response = await protectedFetch(`/api/decisions/${decision.id}/evidence`);
+        if (!response.ok) return [];
+        const result = await response.json() as { groups?: Record<string, Array<{ id: string; kind: EvidenceItem["kind"]; title: string; content: string; verification: EvidenceItem["verification"] }>> };
+        return Object.values(result.groups ?? {}).flat().map((item) => ({
+          id: `evidence:${item.id}`, kind: item.kind, title: item.title,
+          summary: item.content, verification: item.verification,
+        }));
+      }));
+      if (!cancelled) setTypedEvidence(groups.flat());
+    }
+    void loadTypedEvidence();
+    return () => { cancelled = true; };
+  }, [state.data.decisions]);
 
   const evidenceItems = useMemo<EvidenceItem[]>(() => [
     { id: "profile:self", kind: "profile", title: "个人经营章程", summary: state.data.profile.vision || "价值观、愿景与现实边界", verification: "record_backed", locked: true },
     ...state.data.goals.map((item) => ({ id: `goal:${item.id}`, kind: "goal" as const, title: item.title, summary: `${item.domain} · ${item.horizon} · 进度 ${item.progress}%`, verification: "record_backed" as const })),
     ...state.data.decisions.map((item) => ({ id: `decision:${item.id}`, kind: "decision" as const, title: item.title, summary: item.choice, verification: "record_backed" as const })),
     ...state.data.meetings.slice(0, 8).map((item) => ({ id: `meeting:${item.id}`, kind: "meeting" as const, title: item.title, summary: item.summary, verification: "record_backed" as const })),
-  ], [state.data]);
+    ...typedEvidence,
+  ], [state.data, typedEvidence]);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -34,7 +54,8 @@ export function MeetingIntake({ kind }: { kind: string }) {
     try {
       const prior = readPendingOperation<Record<string, unknown>>(window.sessionStorage, operationKey);
       const evidence = evidenceItems.filter((item) => selectedEvidence.has(item.id)).map((item) => {
-        const [type, id] = item.id.split(":");
+        const [type, ...rest] = item.id.split(":");
+        const id = rest.join(":");
         return { type, id };
       });
       if (!prior && evidence.length < 2) { setStatus("请至少选择两条不同的真实记录；个人章程之外，还需要一项目标、决策或历史会议。"); return; }
