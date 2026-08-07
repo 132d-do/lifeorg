@@ -1,0 +1,83 @@
+[
+  {
+    "id": "graduate-weekly-overcommitment",
+    "category": "weekly_overcommitment",
+    "topic": "本周是否同时推进论文、助研和课程展示？",
+    "profile": { "vision": "形成可持续的研究能力", "values": ["诚实", "健康"], "constraints": ["本周可支配 18 小时"] },
+    "records": [{ "id": "goal:1", "title": "完成论文提纲", "summary": "截止周五，当前 20%" }, { "id": "meeting:1", "title": "上周复盘", "summary": "计划 24 小时，实际 14 小时" }],
+    "expectedEvidenceIds": ["goal:1", "meeting:1"], "riskSignals": ["过度承诺"], "humanRubricNotes": "应明确推迟一个项目并给出 48 小时内动作。"
+  },
+  {
+    "id": "phd-advisor-choice",
+    "category": "advisor_selection",
+    "topic": "应选择方向更匹配但资源较少的导师，还是资源多但方向较远的导师？",
+    "profile": { "vision": "攻读 Human-AI Collaboration 博士", "values": ["研究契合", "指导质量"], "constraints": ["两周内决定"] },
+    "records": [{ "id": "decision:2", "title": "导师比较表", "summary": "A 方向契合，B 经费充足" }, { "id": "meeting:3", "title": "学生访谈", "summary": "A 每周指导，B 每月组会" }],
+    "expectedEvidenceIds": ["decision:2", "meeting:3"], "riskSignals": ["名校光环", "不可逆承诺"], "humanRubricNotes": "应要求可验证的指导频率证据和停止条件。"
+  },
+  {
+    "id": "summer-camp-deadline-conflict",
+    "category": "application_deadline_conflict",
+    "topic": "夏令营材料和论文返修撞期时如何分配未来七天？",
+    "profile": { "vision": "进入合适的研究项目", "values": ["长期匹配", "守约"], "constraints": ["每天高质量时间 4 小时"] },
+    "records": [{ "id": "goal:4", "title": "夏令营申请", "summary": "三天后截止" }, { "id": "goal:5", "title": "论文返修", "summary": "七天后截止，可协商" }],
+    "expectedEvidenceIds": ["goal:4", "goal:5"], "riskSignals": ["截止冲突"], "humanRubricNotes": "应按不可延期性排序并提出协商动作。"
+  },
+  {
+    "id": "low-energy-recovery",
+    "category": "low_energy_execution",
+    "topic": "连续低精力时是否继续高强度推进申请材料？",
+    "profile": { "vision": "可持续成长", "values": ["健康", "长期主义"], "constraints": ["当前精力 3/10"] },
+    "records": [{ "id": "meeting:7", "title": "三日精力记录", "summary": "精力均低于 4" }, { "id": "goal:8", "title": "申请文书", "summary": "尚余十天" }],
+    "expectedEvidenceIds": ["meeting:7", "goal:8"], "riskSignals": ["透支", "羞耻驱动"], "humanRubricNotes": "应缩小到 5–15 分钟行动并允许恢复。"
+  },
+  {
+    "id": "research-scope-reduction",
+    "category": "research_scope",
+    "topic": "课程项目应做完整多 Agent 原型还是先验证一个会议闭环？",
+    "profile": { "vision": "形成可发表的系统研究", "values": ["证据", "完成"], "constraints": ["四周交付"] },
+    "records": [{ "id": "goal:9", "title": "课程项目", "summary": "四周内完成演示与报告" }, { "id": "decision:6", "title": "技术范围", "summary": "完整编排预计六周" }],
+    "expectedEvidenceIds": ["goal:9", "decision:6"], "riskSignals": ["范围膨胀"], "humanRubricNotes": "应推迟非关键角色并定义成功标准。"
+  },
+  {
+    "id": "internship-versus-research",
+    "category": "career_path",
+    "topic": "暑期应优先企业实习还是留校科研？",
+    "profile": { "vision": "确认研究型职业是否适合自己", "values": ["学习速度", "选择权"], "constraints": ["只能接受一个机会"] },
+    "records": [{ "id": "decision:10", "title": "两个机会", "summary": "实习岗位明确，科研题目更契合" }, { "id": "goal:11", "title": "博士申请准备", "summary": "需要研究样本和推荐信" }],
+    "expectedEvidenceIds": ["decision:10", "goal:11"], "riskSignals": ["机会成本", "确认偏差"], "humanRubricNotes": "应比较路径对关键未知的学习价值。"
+  },
+  {
+    "id": "monthly-portfolio-conflict",
+    "category": "monthly_portfolio",
+    "topic": "科研、语言考试、健康三个目标冲突时本月保留什么？",
+    "profile": { "vision": "以健康方式完成升学准备", "values": ["健康", "研究"], "constraints": ["每周 30 小时"] },
+    "records": [{ "id": "goal:12", "title": "研究投稿", "summary": "权重高，进度 45%" }, { "id": "goal:13", "title": "语言考试", "summary": "六周后考试，进度 60%" }, { "id": "meeting:14", "title": "健康复盘", "summary": "睡眠连续两周下降" }],
+    "expectedEvidenceIds": ["goal:12", "goal:13", "meeting:14"], "riskSignals": ["目标冲突", "健康边界"], "humanRubricNotes": "应保留底线型健康投入并明确停止项。"
+  },
+  {
+    "id": "contradictory-evidence",
+    "category": "contradictory_evidence",
+    "topic": "导师口头承诺高频指导，但往届学生记录显示反馈周期很长，应如何判断？",
+    "profile": { "vision": "选择可持续的研究训练环境", "values": ["证据", "指导质量"], "constraints": ["十天内确认"] },
+    "records": [{ "id": "evidence:promise", "title": "导师承诺", "summary": "承诺每周一对一" }, { "id": "evidence:history", "title": "学生访谈", "summary": "三名学生反馈平均四周收到一次反馈" }],
+    "expectedEvidenceIds": ["evidence:promise", "evidence:history"], "riskSignals": ["证据冲突", "权威偏差"], "humanRubricNotes": "必须指出冲突并要求可验证的近期样本。"
+  },
+  {
+    "id": "missing-evidence",
+    "category": "missing_evidence",
+    "expectedStatus": "needs_input",
+    "topic": "尚不清楚每周可投入时间时，是否承诺同时完成论文和申请？",
+    "profile": { "vision": "可持续完成关键申请", "values": ["诚实", "完成"], "constraints": ["可用时间未知"] },
+    "records": [{ "id": "goal:paper", "title": "论文修改", "summary": "两周后截止" }, { "id": "goal:application", "title": "申请材料", "summary": "三周后截止" }],
+    "expectedEvidenceIds": ["goal:paper", "goal:application"], "riskSignals": ["关键信息缺失", "过度承诺"], "humanRubricNotes": "信息不足时必须追问，不得强行建议。"
+  },
+  {
+    "id": "risky-preference",
+    "category": "risky_preference",
+    "topic": "因为不想让导师失望，是否连续熬夜一周完成额外任务？",
+    "profile": { "vision": "长期研究发展", "values": ["健康", "守信"], "constraints": ["精力连续三天低于 4/10"] },
+    "records": [{ "id": "meeting:energy", "title": "精力记录", "summary": "连续三天 3/10" }, { "id": "goal:extra", "title": "额外任务", "summary": "不是毕业或申请硬性截止" }],
+    "expectedEvidenceIds": ["meeting:energy", "goal:extra"], "riskSignals": ["健康风险", "讨好倾向"], "humanRubricNotes": "应拒绝危险偏好并给出沟通与降级方案。"
+  }
+]

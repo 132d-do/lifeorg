@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { and, asc, eq, lt } from "drizzle-orm";
 import { getDb } from "../../../db/index.ts";
-import { decisions, goals, meetingApprovals, meetingDecisionLeases, meetingMessages, meetingTurnClaims, meetingTurnLeases, meetings, profiles, operatingCycles } from "../../../db/schema.ts";
+import { decisions, evidenceItems, goals, meetingApprovals, meetingDecisionLeases, meetingMessages, meetingTurnClaims, meetingTurnLeases, meetings, profiles, operatingCycles } from "../../../db/schema.ts";
 import type { EvidenceRecord, MutationPreview } from "../agents/schemas.ts";
 import type { EvidenceReference, MeetingCreateRequest } from "./contracts.ts";
 import { completedDecisionResponse, completedTurnResponse } from "./completion-fence.ts";
@@ -59,7 +59,20 @@ export class D1MeetingRepository implements MeetingRepository {
   }
 
   async createMeeting(userId: string, request: MeetingCreateRequest, fingerprint: string, records: EvidenceRecord[]) {
-    const input = { governance: { createFingerprint: fingerprint, intake: request.intake, evidenceReferences: request.evidence, records, turnResponses: {}, turnFingerprints: {}, decisions: {}, decisionFingerprints: {}, decisionHistory: [], lockedMutationIntent: request.lockedMutationIntent } };
+    const input = { governance: {
+      createFingerprint: fingerprint,
+      intake: request.intake,
+      evidenceReferences: request.evidence,
+      records,
+      policyInput: {
+        explicitDepth: request.explicitDepth,
+        reversibility: request.reversibility,
+        charterConflict: request.charterConflict,
+        unknownCount: request.unknownCount,
+      },
+      turnResponses: {}, turnFingerprints: {}, decisions: {}, decisionFingerprints: {}, decisionHistory: [],
+      lockedMutationIntent: request.lockedMutationIntent,
+    } };
     const [created] = await getDb().insert(meetings).values({
       userId, type: request.kind, title: meetingTitleForKind(request.kind), energy: request.intake.energy ?? null, mood: request.intake.mood ?? null,
       inputs: JSON.stringify(input), summary: request.topic, clientRequestId: request.clientRequestId, topic: request.topic,
@@ -88,6 +101,15 @@ export class D1MeetingRepository implements MeetingRepository {
       } else if (reference.type === "decision") {
         const [row] = await db.select().from(decisions).where(and(eq(decisions.id, Number(reference.id)), eq(decisions.userId, userId))).limit(1);
         if (row) result.push({ id: `decision:${row.id}`, type: "decision", title: row.title, summary: `${row.choice}；${row.reason}`, updatedAt: row.updatedAt });
+      } else if (reference.type === "evidence") {
+        const [row] = await db.select().from(evidenceItems).where(and(eq(evidenceItems.id, reference.id), eq(evidenceItems.userId, userId))).limit(1);
+        if (row) result.push({
+          id: `evidence:${row.id}`,
+          type: `evidence:${row.kind}:${row.verification}`,
+          title: row.title,
+          summary: row.content,
+          updatedAt: row.createdAt,
+        });
       } else {
         const [row] = await db.select().from(meetings).where(and(eq(meetings.id, Number(reference.id)), eq(meetings.userId, userId))).limit(1);
         if (row) result.push({ id: `meeting:${row.id}`, type: "meeting", title: row.title, summary: row.summary, updatedAt: row.updatedAt || row.createdAt });
@@ -183,6 +205,15 @@ export class D1MeetingRepository implements MeetingRepository {
     const cycleMutations = input.mutations.filter((mutation) => mutation.type === "cycle.create");
     if (cycleMutations.length > 1) throw new MeetingServiceError("invalid_state", "Only one cycle can be created by an approval");
     const cycleIdForApproval = cycleMutations.length ? crypto.randomUUID() : null;
+    const forecastIdForApproval = cycleMutations.length && room.recommendation ? crypto.randomUUID() : null;
+    const effectiveModels = [...new Set(room.messages.map((message) => message.modelMetadata.model).filter((model): model is string => Boolean(model)))];
+    const reproducibility = room.recommendation ? {
+      orchestrationPolicyVersion: room.orchestrationPolicy?.policyVersion ?? room.recommendation.orchestrationVersion,
+      promptVersion: room.recommendation.promptVersion,
+      schemaVersion: room.recommendation.schemaVersion,
+      effectiveModels,
+      rubricVersion: "2026-08-08.v1",
+    } : null;
     if (cycleMutations.length) {
       const [active] = await db.select({ id: operatingCycles.id }).from(operatingCycles)
         .where(and(eq(operatingCycles.userId, userId), eq(operatingCycles.activeSlot, "primary"))).limit(1);
@@ -218,13 +249,35 @@ export class D1MeetingRepository implements MeetingRepository {
         const clientRequestId = `meeting:${meetingId}:${input.mutationHash}`;
         const requestFingerprint = input.mutationHash;
         const now = new Date().toISOString();
+        if (!forecastIdForApproval || !room.recommendation) throw new MeetingServiceError("invalid_state", "Approved cycle requires a forecast snapshot");
+        const evidenceSnapshot = JSON.stringify({
+          records: room.records,
+          evidence: room.recommendation.evidence,
+          recommendationSnapshot: room.recommendation,
+          centralAssumption: room.recommendation.centralAssumption,
+        });
+        statements.push(env.DB.prepare(`INSERT INTO decision_forecasts
+          (id,user_id,decision_id,meeting_id,client_request_id,request_fingerprint,prediction,evidence_snapshot,confidence,version,created_at)
+          SELECT ?,?,NULL,?,?,?,?,?,?,?,? WHERE ${approvalGuard}`)
+          .bind(forecastIdForApproval, userId, meetingId, `${clientRequestId}:forecast`, requestFingerprint,
+            JSON.stringify(room.recommendation.forecast), evidenceSnapshot, room.recommendation.forecast.confidencePercent,
+            JSON.stringify(reproducibility), now, ...guardBindings));
         statements.push(env.DB.prepare(`INSERT INTO operating_cycles
           (id,user_id,client_request_id,request_fingerprint,active_slot,source_type,source_record_id,source_mutation_hash,commitment,start_local_date,review_local_date,time_zone,success_criterion,stop_or_adjust_condition,status,projection,created_at,updated_at)
           SELECT ?,?,?,?,'primary','approved_meeting',?,?,?,?,?,?,?,?,'active',?,?,? WHERE ${approvalGuard}`)
           .bind(cycleId, userId, clientRequestId, requestFingerprint, String(meetingId), input.mutationHash,
             mutation.commitment, mutation.startLocalDate, mutation.reviewLocalDate, mutation.timeZone,
             mutation.successCriterion, mutation.stopOrAdjustCondition,
-            JSON.stringify(mutation.predictionId ? { predictionId: mutation.predictionId } : {}), now, now, ...guardBindings));
+            JSON.stringify({
+              forecastId: forecastIdForApproval,
+              meetingId,
+              recommendationSnapshot: room.recommendation,
+              promptVersion: room.recommendation.promptVersion,
+              schemaVersion: room.recommendation.schemaVersion,
+              effectiveModels,
+              rubricVersion: "2026-08-08.v1",
+              reproducibility,
+            }), now, now, ...guardBindings));
         statements.push(env.DB.prepare(`INSERT INTO cycle_events
           (id,user_id,cycle_id,client_request_id,request_fingerprint,sequence,type,represented_local_date,payload,created_at)
           SELECT ?,?,?,?, ?,1,'activated',NULL,?,? WHERE EXISTS

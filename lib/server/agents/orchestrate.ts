@@ -3,6 +3,13 @@ import { chiefOfStaffAgent, operationsOfficerAgent, riskAuditorAgent, strategyAr
 import { AgentContributionSchema, CompletenessSchema, type AgentContribution, type EvidenceRecord, type MeetingTurnResponse } from "./schemas.ts";
 import { gateRecommendation } from "./quality-gate.ts";
 import { classifyMeetingMode, type MeetingPolicy, type MeetingPolicyInput } from "./meeting-policy.ts";
+import { AgentRunMetadataSchema, type AgentRunMetadata } from "../observability/agent-run-metadata.ts";
+
+export function observeAgentRunMetadata(candidate: unknown, observer?: (metadata: AgentRunMetadata) => void) {
+  const metadata = AgentRunMetadataSchema.parse(candidate);
+  observer?.(metadata);
+  return metadata;
+}
 
 export type RunRequest = {
   phase: "completeness" | "specialist" | "synthesis";

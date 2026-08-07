@@ -224,7 +224,7 @@ export const evidenceItems = sqliteTable("evidence_items", {
 export const decisionForecasts = sqliteTable("decision_forecasts", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
-  decisionId: integer("decision_id").notNull(),
+  decisionId: integer("decision_id"),
   meetingId: integer("meeting_id"),
   clientRequestId: text("client_request_id").notNull(),
   requestFingerprint: text("request_fingerprint").notNull(),
@@ -240,7 +240,7 @@ export const decisionForecasts = sqliteTable("decision_forecasts", {
 export const recommendationEvaluations = sqliteTable("recommendation_evaluations", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
-  decisionId: integer("decision_id").notNull(),
+  decisionId: integer("decision_id"),
   meetingId: integer("meeting_id"),
   cycleId: text("cycle_id"),
   forecastId: text("forecast_id"),

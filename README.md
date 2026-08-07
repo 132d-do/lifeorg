@@ -1,25 +1,36 @@
 # LifeOrg · 个人经营系统
 
-LifeOrg 把“经营组织”的方法转化为个人可执行的日、周、月管理闭环。用户始终是最终 CEO，Agent 团队负责补充视角、识别风险和整理行动，不替用户决定价值排序。
+LifeOrg 把“经营组织”的方法转化为个人可执行、可复查的决策学习闭环。用户始终是最终 CEO，Agent 团队负责补充视角、识别风险和整理行动，不替用户决定价值排序。
 
 线上版本：[lifeorg.dovis3970.chatgpt.site](https://lifeorg.dovis3970.chatgpt.site)
 
 ## 核心能力
 
-- 每日站会、周经营会与月度战略会
+- 每日站会、周经营会、月度战略会与专项决策会
+- 一个活动中的七日经营周期：批准建议、每日事实记录、第七天复盘
+- 基于个人章程、目标、历史决策和会议记录的证据选择
+- 建议中的中心假设、可观察预测、反证、停止条件与批准影响预览
 - 目标组合、进度更新和领域资源分布
 - 决策记录、一周后复盘与判断校准
 - 精力趋势、会议节奏和经营洞察
 - 个人经营章程、会议提醒与四角色 Agent 团队
 - Cloudflare D1 云端持久化，按 ChatGPT 身份或设备隔离数据
-- OpenAI Responses API 多 Agent 路由；未配置密钥时使用透明的结构化框架
+- OpenAI Agents SDK 的四角色治理编排；未配置密钥时明确标记结构化离线模式
+
+## 决策与执行闭环
+
+复杂选择采用深度（`deep`）模式：幕僚长先检查材料，战略架构师、运营执行官和风险审计官分别独立评议，再由幕僚长综合并执行质量门禁。日常可逆事项采用快速（`fast`）模式，只召集所需角色以控制成本和认知负担。界面只显示实际参与的角色，不用模板冒充真实 Agent 讨论。
+
+建议只有在引用至少两条真实记录、给出 24–48 小时行动和可验证的七日周期后才能进入批准。批准、部分采用、自主执行或否决都保留审计快照；只有批准会提交预览中明确列出的变更。
+
+活动周期期间，首页只突出一个 `CURRENT COMMITMENT`。每天记录完成、推进、受阻、缩小、改期或停止；第七天分别评价行动完成度、建议准确度和决策价值，原建议和预测不会被结果反写。
 
 ## 技术栈
 
 - Next.js 16 + React 19 + Vinext
 - Cloudflare Workers + D1
 - Drizzle ORM / Drizzle Kit
-- OpenAI Responses API（默认模型 `gpt-5.6-terra`）
+- OpenAI Agents SDK（专家模型 `gpt-5.6-terra`，幕僚长模型 `gpt-5.6-sol`）
 - OpenAI Sites 托管
 
 ## 本地开发
@@ -37,14 +48,22 @@ npm run dev
 ```bash
 npm run lint
 npm run build
+node scripts/run-agent-evals.mjs --variant all --offline-fixture
 ```
+
+离线 fixture 只验证评测管线，不能证明多 Agent 比单 Agent 更可靠。任何“质量提升”发布声明都必须另外满足版本化量表和人工抽样门槛。
 
 ## 环境变量
 
-- `OPENAI_API_KEY`：可选，配置后启用真实多 Agent 推理。应作为托管环境密钥保存，不要提交到仓库。
-- `OPENAI_MODEL`：可选，默认 `gpt-5.6-terra`。
+- `OPENAI_API_KEY`：可选，配置后启用真实多 Agent 推理。只能作为 Sites 服务端私密环境变量保存，浏览器、D1、错误消息和 GitHub 都不得出现密钥。
+- `OPENAI_SPECIALIST_MODEL`：可选且受允许列表约束，默认 `gpt-5.6-terra`。
+- `OPENAI_CHIEF_MODEL`：可选且受允许列表约束，默认 `gpt-5.6-sol`。
 
-`.openai/hosting.json` 将 D1 绑定声明为 `DB`。数据库结构位于 `db/schema.ts`，迁移位于 `drizzle/`。
+未配置密钥或服务不可用时，会议会显示“结构化离线模式”。用户仍能建立手动目标周期并记录自己的判断，但系统不会生成或展示虚构的 Agent 发言。
+
+`.openai/hosting.json` 将 D1 绑定声明为 `DB`。数据库结构位于 `db/schema.ts`，增量迁移位于 `drizzle/`；`0005` 增加周期/事件，`0006` 增加证据/预测/建议评估。迁移不删除原有目标、会议或决策记录。
+
+运行观测默认不保存个人内容。若部署环境提供私有 `AGENT_RUNS` Analytics Engine 绑定，只写入匿名用户 ID、模式、模型/协议版本、耗时、token 计数、状态和错误类别；不会写入主题、提示词、回复、笔记、证据或身份凭据。
 
 ## 产品原则
 

@@ -4,6 +4,12 @@ import type { AgentExecutor } from "./orchestrate.ts";
 import { ChiefOutputSchema } from "./schemas.ts";
 import type { OfflineReason } from "./offline.ts";
 
+export const OPENAI_PRIVACY_OPTIONS = {
+  store: false,
+  tracingDisabled: true,
+  traceIncludeSensitiveData: false,
+} as const;
+
 export class AgentExecutionError extends Error {
   readonly code: Exclude<OfflineReason, "missing_credentials">;
   constructor(code: Exclude<OfflineReason, "missing_credentials">) {
@@ -44,29 +50,63 @@ export function offlineReasonFromError(error: unknown): Exclude<OfflineReason, "
   return "provider_failure";
 }
 
-export function createOpenAIAgentExecutor(apiKey: string, timeoutMs = 25_000): AgentExecutor {
+export type AgentExecutionObservation = {
+  phase: "completeness" | "specialist" | "synthesis";
+  model: string;
+  durationMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  status: "ready" | "error";
+  errorClass: string | null;
+};
+
+function usageFromResponses(result: { rawResponses?: Array<{ usage?: { inputTokens?: number; outputTokens?: number } }> }) {
+  return (result.rawResponses ?? []).reduce((total, response) => ({
+    inputTokens: total.inputTokens + (response.usage?.inputTokens ?? 0),
+    outputTokens: total.outputTokens + (response.usage?.outputTokens ?? 0),
+  }), { inputTokens: 0, outputTokens: 0 });
+}
+
+export function createOpenAIAgentExecutor(
+  apiKey: string,
+  timeoutMs = 25_000,
+  options: { onRun?: (observation: AgentExecutionObservation) => void | Promise<void> } = {},
+): AgentExecutor {
   const provider = new OpenAIProvider({ apiKey, useResponses: true });
   return async ({ agent, phase, input, signal: parentSignal }) => {
+    const startedAt = Date.now();
+    const model = typeof agent.model === "string" ? agent.model : agent.name;
+    let usage = { inputTokens: 0, outputTokens: 0 };
     try {
       const result = await runWithTimeout((signal) => run(agent as Agent, JSON.stringify({ phase, evidencePacket: input }), {
           modelProvider: provider,
-          modelSettings: { store: false },
-          tracingDisabled: true,
-          traceIncludeSensitiveData: false,
+          modelSettings: { store: OPENAI_PRIVACY_OPTIONS.store },
+          tracingDisabled: OPENAI_PRIVACY_OPTIONS.tracingDisabled,
+          traceIncludeSensitiveData: OPENAI_PRIVACY_OPTIONS.traceIncludeSensitiveData,
           maxTurns: 1,
           signal,
         }), timeoutMs, parentSignal);
-      if (phase === "specialist") return result.finalOutput;
-      const chief = ChiefOutputSchema.parse(result.finalOutput);
-      if (phase === "completeness") {
+      usage = usageFromResponses(result);
+      let output: unknown;
+      if (phase === "specialist") output = result.finalOutput;
+      else {
+        const chief = ChiefOutputSchema.parse(result.finalOutput);
+        if (phase === "completeness") {
         if (chief.mode === "recommendation") throw new AgentExecutionError("invalid_output");
-        return { sufficient: chief.sufficient, question: chief.question, missingEvidence: chief.missingEvidence };
+          output = { sufficient: chief.sufficient, question: chief.question, missingEvidence: chief.missingEvidence };
+        } else {
+          if (chief.mode !== "recommendation") throw new AgentExecutionError("invalid_output");
+          output = chief.recommendation;
+        }
       }
-      if (chief.mode !== "recommendation") throw new AgentExecutionError("invalid_output");
-      return chief.recommendation;
+      try { await options.onRun?.({ phase, model, durationMs: Math.max(0, Date.now() - startedAt), ...usage, status: "ready", errorClass: null }); }
+      catch { /* Telemetry must never change the Agent result. */ }
+      return output;
     } catch (error) {
-      if (error instanceof AgentExecutionError) throw error;
-      throw new AgentExecutionError(offlineReasonFromError(error));
+      const normalized = error instanceof AgentExecutionError ? error : new AgentExecutionError(offlineReasonFromError(error));
+      try { await options.onRun?.({ phase, model, durationMs: Math.max(0, Date.now() - startedAt), ...usage, status: "error", errorClass: normalized.code }); }
+      catch { /* Telemetry must never change the meeting result. */ }
+      throw normalized;
     }
   };
 }

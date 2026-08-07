@@ -38,6 +38,7 @@ function cycleService(repository = new InMemoryCycleRepository()) {
       repository,
       ownsGoal: async (userId, goalId) => userId === userA.userId && goalId === 1,
       ownsApprovedMeeting: async () => false,
+      todayLocalDate: () => "2026-08-15",
     }),
   };
 }
@@ -84,6 +85,18 @@ test("check-ins are retry safe and adjustments require the exact canonical propo
     ...changes,
   });
   assert.equal(adjusted.commitment, changes.commitment);
+});
+
+test("an adjustment cannot move review outside the original seven-day boundary", async () => {
+  const { service } = cycleService();
+  const { cycle } = await service.create(userA, request("bounded-adjustment-cycle"));
+  const changes = { reviewLocalDate: "2026-08-16" };
+  await assert.rejects(service.adjust(userA, cycle.id, {
+    clientRequestId: "bounded-adjustment-request",
+    action: "approve",
+    proposalHash: await canonicalAdjustmentHash(cycle.id, changes),
+    ...changes,
+  }), (error) => error.code === "invalid_state");
 });
 
 test("review closes the active slot and permits the next governed cycle", async () => {

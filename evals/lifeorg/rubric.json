@@ -1,0 +1,13 @@
+{
+  "version": "2026-08-08.v1",
+  "components": {
+    "citationValidity": { "scale": [0, 1, 2, 3, 4], "anchor": "引用均存在且直接支持对应判断" },
+    "evidenceFidelity": { "scale": [0, 1, 2, 3, 4], "anchor": "不改写记录含义，区分事实、偏好与未知" },
+    "alternativeQuality": { "scale": [0, 1, 2, 3, 4], "anchor": "比较真实替代方案与机会成本" },
+    "riskDetection": { "scale": [0, 1, 2, 3, 4], "anchor": "识别关键风险、反证与停止条件" },
+    "actionability": { "scale": [0, 1, 2, 3, 4], "anchor": "包含 24–48 小时动作与七日验证" },
+    "calibration": { "scale": [0, 1, 2, 3, 4], "anchor": "信心、假设与改变建议的证据相匹配" }
+  },
+  "reportSeparately": ["durationMs", "inputTokens", "outputTokens", "modelCalls"],
+  "release": { "requiredHumanSamples": 14, "minimumIndependentGain": 0.25 }
+}

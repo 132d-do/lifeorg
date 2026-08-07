@@ -125,7 +125,7 @@
           "name": "decision_id",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "meeting_id": {
@@ -1419,7 +1419,7 @@
           "name": "decision_id",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "meeting_id": {

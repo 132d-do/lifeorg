@@ -235,16 +235,37 @@ export class D1CycleRepository implements CycleRepository {
     if (!["active", "review_due", "stopped"].includes(cycle.status)) throw new CycleRepositoryError("invalid_state");
     const eventId = crypto.randomUUID();
     const now = new Date().toISOString();
+    const forecastId = typeof cycle.projection.forecastId === "string" ? cycle.projection.forecastId : null;
+    const recommendationSnapshot = cycle.projection.recommendationSnapshot ?? {};
+    const reproducibility = cycle.projection.reproducibility ?? {
+      promptVersion: cycle.projection.promptVersion ?? "unknown",
+      schemaVersion: cycle.projection.schemaVersion ?? "unknown",
+      effectiveModels: cycle.projection.effectiveModels ?? [],
+      rubricVersion: cycle.projection.rubricVersion ?? "2026-08-08.v1",
+    };
+    const statements = [
+      env.DB.prepare(`INSERT INTO cycle_events
+        (id,user_id,cycle_id,client_request_id,request_fingerprint,sequence,type,represented_local_date,payload,created_at)
+        SELECT ?,?,?,?,?,COALESCE((SELECT MAX(sequence)+1 FROM cycle_events WHERE cycle_id=?),1),'reviewed',NULL,?,?
+        WHERE EXISTS (SELECT 1 FROM operating_cycles WHERE id=? AND user_id=? AND status IN ('active','review_due','stopped'))`)
+        .bind(eventId, userId, cycleId, request.clientRequestId, fingerprint, cycleId, JSON.stringify(request), now, cycleId, userId),
+      env.DB.prepare("UPDATE operating_cycles SET status='reviewed',active_slot=NULL,updated_at=? WHERE id=? AND user_id=? AND status IN ('active','review_due','stopped')")
+        .bind(now, cycleId, userId),
+    ];
+    if (forecastId) {
+      statements.unshift(env.DB.prepare(`INSERT INTO recommendation_evaluations
+        (id,user_id,decision_id,meeting_id,cycle_id,forecast_id,recommendation_snapshot,observed_evidence,action_completion,recommendation_accuracy,decision_value,version,created_at)
+        SELECT ?,?,NULL,?,?,?,?,?,?,?,?,?,? WHERE EXISTS
+        (SELECT 1 FROM operating_cycles WHERE id=? AND user_id=? AND status IN ('active','review_due','stopped'))`)
+        .bind(crypto.randomUUID(), userId,
+          cycle.source.type === "approved_meeting" ? cycle.source.meetingId : null,
+          cycleId, forecastId, JSON.stringify(recommendationSnapshot), request.observedEvidence,
+          request.actionCompletion, request.recommendationAccuracy, request.decisionValue,
+          JSON.stringify({ ...reproducibility, evaluationVersion: "2026-08-08.v1" }),
+          now, cycleId, userId));
+    }
     try {
-      await env.DB.batch([
-        env.DB.prepare(`INSERT INTO cycle_events
-          (id,user_id,cycle_id,client_request_id,request_fingerprint,sequence,type,represented_local_date,payload,created_at)
-          SELECT ?,?,?,?,?,COALESCE((SELECT MAX(sequence)+1 FROM cycle_events WHERE cycle_id=?),1),'reviewed',NULL,?,?
-          WHERE EXISTS (SELECT 1 FROM operating_cycles WHERE id=? AND user_id=? AND status IN ('active','review_due','stopped'))`)
-          .bind(eventId, userId, cycleId, request.clientRequestId, fingerprint, cycleId, JSON.stringify(request), now, cycleId, userId),
-        env.DB.prepare("UPDATE operating_cycles SET status='reviewed',active_slot=NULL,updated_at=? WHERE id=? AND user_id=? AND status IN ('active','review_due','stopped')")
-          .bind(now, cycleId, userId),
-      ]);
+      await env.DB.batch(statements);
     } catch {
       if (await existingEvent(userId, cycleId, request.clientRequestId, fingerprint)) return (await this.get(userId, cycleId))!;
       throw new CycleRepositoryError("invalid_state");

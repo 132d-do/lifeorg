@@ -1,7 +1,7 @@
 CREATE TABLE `decision_forecasts` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
-	`decision_id` integer NOT NULL,
+	`decision_id` integer,
 	`meeting_id` integer,
 	`client_request_id` text NOT NULL,
 	`request_fingerprint` text NOT NULL,
@@ -33,7 +33,7 @@ CREATE UNIQUE INDEX `evidence_items_user_client_request_unique` ON `evidence_ite
 CREATE TABLE `recommendation_evaluations` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
-	`decision_id` integer NOT NULL,
+	`decision_id` integer,
 	`meeting_id` integer,
 	`cycle_id` text,
 	`forecast_id` text,
