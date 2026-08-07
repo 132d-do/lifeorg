@@ -7,21 +7,12 @@ import type { FormEvent } from "react";
 import { AppShell } from "./app-shell";
 import { ActionForm, MeetingActions, MoodChoices, ProgressControl, ReminderToggle } from "./action-controls";
 import { entityDetailState, findEntityById } from "../../lib/ui-contract";
-import { createSessionFetch } from "../../lib/client/session-bootstrap";
 import { classifyTurnResponse, clearPendingOperation, pendingOperation, readPendingOperation } from "../../lib/client/pending-operation";
+import { protectedFetch, useLifeState, type LifeState } from "../features/shared/use-life-state";
+import { OverviewCockpit } from "../features/cycles/overview-cockpit";
+import { RecommendationEffects } from "../features/meetings/recommendation-effects";
 
 export type Workspace = "overview" | "meetings" | "goals" | "decisions" | "insights" | "settings";
-type Profile = { displayName: string; vision: string; values: string; constraints: string };
-type Goal = { id: number; title: string; domain: string; horizon: string; why: string; progress: number; status: string };
-type Meeting = { id: number; type: string; title: string; energy: number | null; mood: string | null; summary: string; createdAt: string };
-type Decision = { id: number; title: string; choice: string; reason: string; status: string; reviewAt: string | null; createdAt: string };
-type Reminder = { id: number; title: string; time: string; weekday: number | null; enabled: boolean };
-type LifeState = { profile: Profile; goals: Goal[]; meetings: Meeting[]; decisions: Decision[]; reminders: Reminder[] };
-
-const emptyState: LifeState = { profile: { displayName: "人生经营者", vision: "", values: "", constraints: "" }, goals: [], meetings: [], decisions: [], reminders: [] };
-
-const protectedFetch = createSessionFetch();
-
 function meetingApprovalKey(meetingId: string) {
   const storageKey = `lifeorg:meeting:${meetingId}:approval-key`;
   const prior = window.sessionStorage.getItem(storageKey);
@@ -29,36 +20,6 @@ function meetingApprovalKey(meetingId: string) {
   const created = crypto.randomUUID();
   window.sessionStorage.setItem(storageKey, created);
   return created;
-}
-
-function useLifeState() {
-  const [data, setData] = useState(emptyState);
-  const [status, setStatus] = useState("正在连接个人经营记录…");
-  const [notice, setNotice] = useState("");
-  async function load() {
-    setStatus("正在同步…");
-    try {
-      const response = await protectedFetch("/api/state");
-      const result = await response.json() as { data?: LifeState; error?: string };
-      if (!response.ok || !result.data) throw new Error(result.error || "读取失败");
-      setData(result.data); setStatus("个人记录已同步"); setNotice("");
-    } catch { setStatus("同步中断"); setNotice("暂时无法连接个人记录，你可以稍后重试。"); }
-  }
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  async function mutate(action: string, payload: Record<string, unknown>) {
-    setStatus("正在保存…");
-    const response = await protectedFetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, payload }) });
-    const result = await response.json() as { data?: LifeState; error?: string };
-    if (!response.ok || !result.data) { setStatus("保存失败"); throw new Error(result.error || "保存失败"); }
-    setData(result.data); setStatus("个人记录已同步");
-    return result.data;
-  }
-  return { data, status, notice, retry: () => void load(), mutate };
 }
 
 export function LifeOrgClient({ view }: { view: Workspace }) {
@@ -75,6 +36,10 @@ export function LifeOrgClient({ view }: { view: Workspace }) {
 }
 
 function Overview({ data }: { data: LifeState }) {
+  return <OverviewCockpit data={data} fallback={<OverviewWithoutActiveCycle data={data} />} />;
+}
+
+function OverviewWithoutActiveCycle({ data }: { data: LifeState }) {
   const blocked = data.goals.find((goal) => goal.progress < 35);
   const review = data.decisions.find((decision) => decision.status !== "reviewed");
   return <div className="overview-grid">
@@ -202,6 +167,9 @@ type GuidedRecommendation = {
   recommendation: string; evidence: Array<{ recordId: string; claim: string }>; deferredAlternative: string;
   nextAction: string; nextActionWindowHours: number; deadlineOrReviewAt: string; successCriterion: string;
   stopOrAdjustCondition: string; confidence: string; unknowns: string[]; disagreements: string[];
+  centralAssumption: string; forecast: { observableOutcome: string; confidencePercent: number; evidenceThatChangesAdvice: string[] };
+  sevenDayValidationAction: string; adoptionMode?: "full" | "partial" | "self_directed";
+  orchestrationVersion: string; promptVersion: string; schemaVersion: string;
   mutationPreview?: Array<Record<string, unknown>>;
 };
 type GuidedRoom = {
@@ -293,11 +261,33 @@ export function GuidedMeetingRoom({ id }: { id: string }) {
   </div></AppShell>;
   return <AppShell section="meetings" status={status}><div className="content-stack guided-room">
     <section className="card section-card"><p className="section-kicker">GUIDED MEETING · {room?.kind?.toUpperCase() ?? "LOADING"}</p><h2>{room?.topic ?? "正在恢复会议"}</h2><p>阶段：{room?.lifecycle.phase ?? "intake"} · 审批：{room?.lifecycle.approvalStatus ?? "pending"}</p></section>
-    <section className="card section-card"><h3>本次采用的真实记录</h3><div className="evidence-list">{room?.records.map((record) => <article key={record.id}><b>{record.id} · {record.title}</b><p>{record.summary}</p></article>)}</div></section>
+    <section className="card section-card"><h3>本次采用的真实记录</h3><div className="evidence-list">{room?.records.map((record) => <article key={record.id}><b>{record.title}</b><p>{record.summary}</p></article>)}</div></section>
     <section className="card section-card" aria-live="polite"><h3>会议讨论</h3>{turn?.status === "needs_input" && <div className="agent-note"><b>幕僚长只追问一个问题：</b><p>{turn.question}</p><small>缺失：{turn.missingEvidence.join("、")}</small></div>}{turn?.status === "deliberating" && <div className="agent-grid">{turn.contributions.map((item) => <article key={item.role}><span>{item.role}</span><p>{item.conclusion}</p><small>依据：{item.evidenceIds.join("、")} · 未知：{item.uncertainty}</small></article>)}</div>}{turn?.status === "offline" && <div className="notice" role="alert">结构化离线模式：服务暂不可用；你仍可记录个人判断，但这里不会显示虚构的 Agent 发言。</div>}
       {room?.lifecycle.status !== "approved" && <form className="meeting-form" onSubmit={(event) => { event.preventDefault(); void sendTurn(message); }}><label>回复幕僚长或补充证据<textarea value={message} onChange={(event) => setMessage(event.target.value)} required /></label><button data-action="send-turn" className="primary-button" type="submit" disabled={pending || !message.trim()}>{pending ? "处理中…" : hasPendingTurn ? "重试未确认的同一轮" : "提交本轮"}</button>{turn?.status === "offline" && <button data-action="retry" type="button" disabled={pending} onClick={() => void sendTurn(lastMessage, lastTurnId)}>重试同一轮</button>}</form>}
     </section>
-    {recommendation && <section className="card section-card recommendation"><p className="section-kicker">CEO DECISION</p><h2>{recommendation.recommendation}</h2><h3>证据</h3><ul>{recommendation.evidence.map((item) => <li key={`${item.recordId}-${item.claim}`}>{item.recordId}：{item.claim}</li>)}</ul><dl><div><dt>暂缓方案</dt><dd>{recommendation.deferredAlternative}</dd></div><div><dt>24–48 小时下一步</dt><dd>{recommendation.nextAction}</dd></div><div><dt>截止/复查</dt><dd>{recommendation.deadlineOrReviewAt}</dd></div><div><dt>成功标准</dt><dd>{recommendation.successCriterion}</dd></div><div><dt>停止/调整条件</dt><dd>{recommendation.stopOrAdjustCondition}</dd></div><div><dt>信心与未知</dt><dd>{recommendation.confidence} · {recommendation.unknowns.join("；") || "无"}</dd></div><div><dt>Agent 分歧</dt><dd>{recommendation.disagreements.join("；") || "无"}</dd></div></dl><h3>批准后才会执行的变更</h3><pre>{JSON.stringify(recommendation.mutationPreview ?? [], null, 2)}</pre>{canDecide && editing && <label>编辑一句话建议<textarea value={editedAdvice} onChange={(event) => setEditedAdvice(event.target.value)} /></label>}{canDecide && <div className="meeting-actions"><button data-action="edit" type="button" disabled={pending} onClick={() => setEditing((value) => !value)}>编辑</button>{editing && <button data-action="edit" type="button" disabled={pending} onClick={() => void decide("edit")}>保存修改稿</button>}<button data-action="reject" type="button" disabled={pending} onClick={() => void decide("reject")}>否决</button><button data-action="approve" className="primary-button" type="button" disabled={pending || !room?.mutationHash} onClick={() => void decide("approve")}>批准并提交</button></div>}{room?.lifecycle.status === "approved" && <div className="notice" role="status">建议已批准并归档，相关变更已按预览提交。</div>}{room?.lifecycle.status === "draft" && room.decisionHistory.some((event) => event.action === "reject") && <div className="notice" role="status">建议已否决，没有改变经营记录。你可以在上方补充材料，开启新一轮评议。</div>}</section>}
+    {recommendation && <section className="card section-card recommendation">
+      <p className="section-kicker">CEO DECISION</p><h2>{recommendation.recommendation}</h2>
+      <h3>支持这一建议的记录证据</h3><ul>{recommendation.evidence.map((item) => <li key={`${item.recordId}-${item.claim}`}><b>{room?.records.find((record) => record.id === item.recordId)?.title || "已选记录"}：</b>{item.claim}</li>)}</ul>
+      <dl>
+        <div><dt>核心假设</dt><dd>{recommendation.centralAssumption}</dd></div>
+        <div><dt>可观察预测</dt><dd>{recommendation.forecast.observableOutcome}（{recommendation.forecast.confidencePercent}%）</dd></div>
+        <div><dt>什么证据会改变建议</dt><dd>{recommendation.forecast.evidenceThatChangesAdvice.join("；")}</dd></div>
+        <div><dt>暂缓方案</dt><dd>{recommendation.deferredAlternative}</dd></div>
+        <div><dt>24–48 小时下一步</dt><dd>{recommendation.nextAction}</dd></div>
+        <div><dt>7 日验证行动</dt><dd>{recommendation.sevenDayValidationAction}</dd></div>
+        <div><dt>截止/复查</dt><dd>{recommendation.deadlineOrReviewAt}</dd></div>
+        <div><dt>成功标准</dt><dd>{recommendation.successCriterion}</dd></div>
+        <div><dt>停止/调整条件</dt><dd>{recommendation.stopOrAdjustCondition}</dd></div>
+        <div><dt>信心与未知</dt><dd>{recommendation.confidence} · {recommendation.unknowns.join("；") || "无"}</dd></div>
+        <div><dt>Agent 分歧</dt><dd>{recommendation.disagreements.join("；") || "无"}</dd></div>
+      </dl>
+      <RecommendationEffects mutations={recommendation.mutationPreview} evidenceRecords={room?.records ?? []} />
+      {canDecide && <fieldset className="adoption-picker"><legend>你准备如何采用这份建议？</legend><label><input type="radio" name="adoptionMode" checked={adoptionMode === "full"} onChange={() => setAdoptionMode("full")} />完全采用</label><label><input type="radio" name="adoptionMode" checked={adoptionMode === "partial"} onChange={() => setAdoptionMode("partial")} />部分采用</label><label><input type="radio" name="adoptionMode" checked={adoptionMode === "self_directed"} onChange={() => setAdoptionMode("self_directed")} />自主执行并保留原建议</label></fieldset>}
+      {canDecide && editing && <label>编辑一句话建议<textarea value={editedAdvice} onChange={(event) => setEditedAdvice(event.target.value)} /></label>}
+      {canDecide && <div className="meeting-actions"><button data-action="edit" type="button" disabled={pending} onClick={() => setEditing((value) => !value)}>编辑</button>{editing && <button data-action="edit" type="button" disabled={pending} onClick={() => void decide("edit")}>保存修改稿</button>}<button data-action="reject" type="button" disabled={pending} onClick={() => void decide("reject")}>否决</button><button data-action="approve" className="primary-button" type="button" disabled={pending || !room?.mutationHash} onClick={() => void decide("approve")}>批准并提交</button></div>}
+      {room?.lifecycle.status === "approved" && <div className="notice" role="status">建议已批准并归档，相关变更已按预览提交。</div>}
+      {room?.lifecycle.status === "draft" && room.decisionHistory.some((event) => event.action === "reject") && <div className="notice" role="status">建议已否决，没有改变经营记录。你可以在上方补充材料，开启新一轮评议。</div>}
+    </section>}
     <section className="card section-card"><h3>可恢复的会议历史</h3>{room && <div className="message-history">{room.messages.map((item) => <article key={item.id} className={`message ${item.role}`}><b>{item.role === "user" ? "CEO" : item.role}</b><pre>{JSON.stringify(item.content, null, 2)}</pre></article>)}</div>}{room?.decisionHistory?.map((event) => <p className="agent-note" key={event.id}>已记录 {event.action}；原建议快照仍保留：{event.recommendationSnapshot.recommendation}</p>)}</section>
     <p role="status">{status}</p>
   </div></AppShell>;
