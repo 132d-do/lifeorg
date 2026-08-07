@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { and, asc, eq, lt } from "drizzle-orm";
 import { getDb } from "../../../db/index.ts";
-import { decisions, goals, meetingApprovals, meetingDecisionLeases, meetingMessages, meetingTurnClaims, meetingTurnLeases, meetings, profiles } from "../../../db/schema.ts";
+import { decisions, goals, meetingApprovals, meetingDecisionLeases, meetingMessages, meetingTurnClaims, meetingTurnLeases, meetings, profiles, operatingCycles } from "../../../db/schema.ts";
 import type { EvidenceRecord, MutationPreview } from "../agents/schemas.ts";
 import type { EvidenceReference, MeetingCreateRequest } from "./contracts.ts";
 import { completedDecisionResponse, completedTurnResponse } from "./completion-fence.ts";
@@ -176,10 +176,20 @@ export class D1MeetingRepository implements MeetingRepository {
     if (prior) return;
     const [lease] = await db.select().from(meetingDecisionLeases).where(and(eq(meetingDecisionLeases.meetingId, meetingId), eq(meetingDecisionLeases.userId, userId), eq(meetingDecisionLeases.idempotencyKey, input.idempotencyKey), eq(meetingDecisionLeases.leaseToken, input.decisionLeaseToken))).limit(1);
     if (!lease) throw new MeetingServiceError("invalid_state", "Decision lease is no longer owned by this approval");
+    const cycleMutations = input.mutations.filter((mutation) => mutation.type === "cycle.create");
+    if (cycleMutations.length > 1) throw new MeetingServiceError("invalid_state", "Only one cycle can be created by an approval");
+    const cycleIdForApproval = cycleMutations.length ? crypto.randomUUID() : null;
+    if (cycleMutations.length) {
+      const [active] = await db.select({ id: operatingCycles.id }).from(operatingCycles)
+        .where(and(eq(operatingCycles.userId, userId), eq(operatingCycles.activeSlot, "primary"))).limit(1);
+      if (active) throw new MeetingServiceError("invalid_state", "An active operating cycle already exists");
+    }
     const decisionGuard = "EXISTS (SELECT 1 FROM meeting_decision_leases WHERE meeting_id=? AND user_id=? AND idempotency_key=? AND lease_token=?)";
     const meetingGuard = "EXISTS (SELECT 1 FROM meetings WHERE id=? AND user_id=? AND lifecycle_status='ready' AND updated_at=? AND final_recommendation=?)";
-    const approvalGuard = `${decisionGuard} AND ${meetingGuard}`;
-    const guardBindings = [meetingId, userId, input.idempotencyKey, input.decisionLeaseToken, meetingId, userId, input.fence.updatedAt, input.fence.finalRecommendation];
+    const cycleGuard = cycleIdForApproval ? " AND NOT EXISTS (SELECT 1 FROM operating_cycles WHERE user_id=? AND active_slot='primary' AND id <> ?)" : "";
+    const approvalGuard = `${decisionGuard} AND ${meetingGuard}${cycleGuard}`;
+    const guardBindings = [meetingId, userId, input.idempotencyKey, input.decisionLeaseToken, meetingId, userId, input.fence.updatedAt, input.fence.finalRecommendation,
+      ...(cycleIdForApproval ? [userId, cycleIdForApproval] : [])];
     const statements: Array<ReturnType<typeof env.DB.prepare>> = [];
     for (const mutation of input.mutations) {
       if (mutation.type === "goal.update") {
@@ -193,10 +203,31 @@ export class D1MeetingRepository implements MeetingRepository {
         statements.push(env.DB.prepare(`INSERT INTO goals (user_id,title,domain,horizon,why,status,progress,target_date) SELECT ?,?,?,?,?,'active',0,? WHERE ${approvalGuard}`).bind(userId, mutation.title, mutation.domain, mutation.horizon, mutation.why, mutation.targetDate ?? null, ...guardBindings));
       } else if (mutation.type === "decision.create") {
         statements.push(env.DB.prepare(`INSERT INTO decisions (user_id,title,options,choice,reason,status,review_at) SELECT ?,?,?,?,?,'decided',? WHERE ${approvalGuard}`).bind(userId, mutation.title, JSON.stringify(mutation.options), mutation.choice, mutation.reason, mutation.reviewAt ?? null, ...guardBindings));
-      } else {
+      } else if (mutation.type === "decision.reviewOutcome") {
         const [decision] = await db.select().from(decisions).where(and(eq(decisions.id, mutation.decisionId), eq(decisions.userId, userId))).limit(1);
         if (!decision) throw new MeetingServiceError("invalid_evidence", "Decision not found");
         statements.push(env.DB.prepare(`INSERT INTO decision_reviews (id,user_id,decision_id,meeting_id,outcome,observed_at,decision_snapshot,recommendation_snapshot,mutation_hash) SELECT ?,?,?,?,?,?,?,?,? WHERE ${approvalGuard}`).bind(crypto.randomUUID(), userId, decision.id, meetingId, mutation.outcome, mutation.observedAt, JSON.stringify(decision), JSON.stringify(room.recommendation), input.mutationHash, ...guardBindings));
+      } else {
+        if (!cycleIdForApproval) throw new MeetingServiceError("invalid_state", "Cycle approval identifier is missing");
+        const cycleId = cycleIdForApproval;
+        const eventId = crypto.randomUUID();
+        const clientRequestId = `meeting:${meetingId}:${input.mutationHash}`;
+        const requestFingerprint = input.mutationHash;
+        const now = new Date().toISOString();
+        statements.push(env.DB.prepare(`INSERT INTO operating_cycles
+          (id,user_id,client_request_id,request_fingerprint,active_slot,source_type,source_record_id,source_mutation_hash,commitment,start_local_date,review_local_date,time_zone,success_criterion,stop_or_adjust_condition,status,projection,created_at,updated_at)
+          SELECT ?,?,?,?,'primary','approved_meeting',?,?,?,?,?,?,?,?,'active',?,?,? WHERE ${approvalGuard}`)
+          .bind(cycleId, userId, clientRequestId, requestFingerprint, String(meetingId), input.mutationHash,
+            mutation.commitment, mutation.startLocalDate, mutation.reviewLocalDate, mutation.timeZone,
+            mutation.successCriterion, mutation.stopOrAdjustCondition,
+            JSON.stringify(mutation.predictionId ? { predictionId: mutation.predictionId } : {}), now, now, ...guardBindings));
+        statements.push(env.DB.prepare(`INSERT INTO cycle_events
+          (id,user_id,cycle_id,client_request_id,request_fingerprint,sequence,type,represented_local_date,payload,created_at)
+          SELECT ?,?,?,?, ?,1,'activated',NULL,?,? WHERE EXISTS
+          (SELECT 1 FROM operating_cycles WHERE id=? AND user_id=? AND active_slot='primary') AND ${approvalGuard}`)
+          .bind(eventId, userId, cycleId, `${clientRequestId}:activated`, requestFingerprint,
+            JSON.stringify({ source: { type: "approved_meeting", meetingId, mutationHash: input.mutationHash } }), now,
+            cycleId, userId, ...guardBindings));
       }
     }
     const event = room.decisionHistory.at(-1);

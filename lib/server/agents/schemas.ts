@@ -51,6 +51,23 @@ export const MutationPreviewSchema = z.discriminatedUnion("type", [
     outcome: z.string().min(1).max(3000),
     observedAt: z.string().min(1),
   }).strict(),
+  z.object({
+    type: z.literal("cycle.create"),
+    commitment: z.string().min(3).max(500),
+    startLocalDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    reviewLocalDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    timeZone: z.string().min(1).max(100).default("Asia/Shanghai"),
+    successCriterion: z.string().min(3).max(500),
+    stopOrAdjustCondition: z.string().min(3).max(500),
+    predictionId: z.string().min(1).max(200).optional(),
+  }).strict().superRefine((value, context) => {
+    const start = Date.parse(`${value.startLocalDate}T00:00:00Z`);
+    const review = Date.parse(`${value.reviewLocalDate}T00:00:00Z`);
+    const days = (review - start) / 86_400_000;
+    if (!Number.isFinite(days) || days < 1 || days > 7) {
+      context.addIssue({ code: "custom", path: ["reviewLocalDate"], message: "review must be 1-7 local days after start" });
+    }
+  }),
 ]);
 
 export const FinalRecommendationSchema = z.object({

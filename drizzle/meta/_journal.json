@@ -36,6 +36,13 @@
       "when": 1784561353998,
       "tag": "0004_harden_meeting_concurrency",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786121780332,
+      "tag": "0005_seven_day_decision_learning_loop",
+      "breakpoints": true
     }
   ]
 }
