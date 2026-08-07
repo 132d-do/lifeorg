@@ -1,5 +1,6 @@
 import type { Identity } from "../identity.ts";
 import type { AgentContribution, EvidenceRecord, FinalRecommendation, MeetingTurnResponse, MutationPreview } from "../agents/schemas.ts";
+import type { MeetingPolicy } from "../agents/meeting-policy.ts";
 import { gateRecommendation } from "../agents/quality-gate.ts";
 import {
   MeetingCreateRequestSchema,
@@ -35,18 +36,21 @@ export type MeetingRoom = {
   intake: MeetingCreateRequest["intake"];
   evidenceReferences: EvidenceReference[];
   records: EvidenceRecord[];
+  policyInput: Pick<MeetingCreateRequest, "explicitDepth" | "reversibility" | "charterConflict" | "unknownCount">;
+  orchestrationPolicy?: MeetingPolicy;
   lifecycle: MeetingLifecycle;
   messages: MeetingMessage[];
   turnResponses: Record<string, MeetingTurnResult>;
   turnFingerprints: Record<string, string>;
   decisions: Record<string, MeetingDecisionResult>;
   decisionFingerprints: Record<string, string>;
-  decisionHistory: Array<{ id: string; action: "approve" | "edit" | "reject"; sessionId: string; recommendationSnapshot: FinalRecommendation; createdAt: string }>;
+  decisionHistory: Array<{ id: string; action: "approve" | "edit" | "reject"; sessionId: string; recommendationSnapshot: FinalRecommendation; adoptionMode?: "full" | "partial" | "self_directed"; createdAt: string }>;
   lockedMutationIntent?: Extract<MutationPreview, { type: "decision.reviewOutcome" }>;
   recommendation?: FinalRecommendation;
   legacyInputs?: Record<string, unknown>;
   legacyAgentOutput?: Record<string, unknown>;
   mutationHash?: string;
+  adoptionMode?: "full" | "partial" | "self_directed";
   updatedAt: string;
 };
 
@@ -137,7 +141,9 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     const room: MeetingRoom = {
       id: serverId("meeting"), userId, clientRequestId: request.clientRequestId, createFingerprint: fingerprint,
       kind: request.kind, topic: request.topic, intake: request.intake, evidenceReferences: request.evidence,
-      records: copy(records), lifecycle: initialMeetingLifecycle(), messages: [], turnResponses: {}, turnFingerprints: {}, decisions: {}, decisionFingerprints: {}, decisionHistory: [],
+      records: copy(records),
+      policyInput: { explicitDepth: request.explicitDepth, reversibility: request.reversibility, charterConflict: request.charterConflict, unknownCount: request.unknownCount },
+      lifecycle: initialMeetingLifecycle(), messages: [], turnResponses: {}, turnFingerprints: {}, decisions: {}, decisionFingerprints: {}, decisionHistory: [],
       ...(request.lockedMutationIntent ? { lockedMutationIntent: copy(request.lockedMutationIntent) } : {}), updatedAt: now,
     };
     this.rooms.set(room.id, copy(room));
@@ -286,7 +292,7 @@ export class InMemoryMeetingRepository implements MeetingRepository {
 
 export function createMeetingService(dependencies: {
   repository: MeetingRepository;
-  deliberate: (packet: { records: EvidenceRecord[]; topic: string; latestUserMessage: string; intake: MeetingCreateRequest["intake"]; messages: MeetingMessage[]; lockedMutationIntent?: MutationPreview }, message: string) => Promise<MeetingTurnResponse | { turn: MeetingTurnResponse; contributions: AgentContribution[] }>;
+  deliberate: (packet: { records: EvidenceRecord[]; topic: string; latestUserMessage: string; kind: MeetingCreateRequest["kind"]; explicitDepth?: "fast" | "deep"; reversibility: "high" | "low"; charterConflict: boolean; unknownCount: number; intake: MeetingCreateRequest["intake"]; messages: MeetingMessage[]; lockedMutationIntent?: MutationPreview }, message: string) => Promise<MeetingTurnResponse | { turn: MeetingTurnResponse; contributions: AgentContribution[]; policy?: MeetingPolicy }>;
 }) {
   const { repository, deliberate } = dependencies;
 
@@ -351,9 +357,14 @@ export function createMeetingService(dependencies: {
       };
       appendMessage("user", { message: request.message }, { source: "user" }, request.clientTurnId);
       try {
-        const deliberation = await deliberate({ records: room.records, topic: room.topic, latestUserMessage: request.message, intake: room.intake, messages: copy(room.messages), ...(room.lockedMutationIntent ? { lockedMutationIntent: room.lockedMutationIntent } : {}) }, request.message);
+        const deliberation = await deliberate({
+          records: room.records, topic: room.topic, latestUserMessage: request.message,
+          kind: room.kind, ...room.policyInput, intake: room.intake, messages: copy(room.messages),
+          ...(room.lockedMutationIntent ? { lockedMutationIntent: room.lockedMutationIntent } : {}),
+        }, request.message);
         const result = "turn" in deliberation ? deliberation.turn : deliberation;
         const contributions = "turn" in deliberation ? deliberation.contributions : result.status === "deliberating" ? result.contributions : [];
+        if ("turn" in deliberation && deliberation.policy) room.orchestrationPolicy = copy(deliberation.policy);
         if (result.status === "ready" && room.lockedMutationIntent) {
           const actual = await canonicalMutationHash(result.recommendation.mutationPreview ?? []);
           const locked = await canonicalMutationHash([room.lockedMutationIntent]);
@@ -444,8 +455,8 @@ export function createMeetingService(dependencies: {
         if (request.mutationHash !== expected || request.mutationHash !== room.mutationHash) throw new MeetingServiceError("mutation_mismatch", "Mutation preview changed after review");
         room.lifecycle = applyMeetingEvent(room.lifecycle, { type: "approve" });
         const sessionId = identity.sessionId;
-        room.decisionHistory.push({ id: serverId("decision-event"), action: "approve", sessionId, recommendationSnapshot: copy(room.recommendation), createdAt: new Date().toISOString() });
-        const approved: MeetingDecisionResult = { status: "approved", meetingId, approvalStatus: "approved", mutationHash: expected };
+        room.decisionHistory.push({ id: serverId("decision-event"), action: "approve", sessionId, recommendationSnapshot: copy(room.recommendation), adoptionMode: request.adoptionMode, createdAt: new Date().toISOString() });
+        const approved: MeetingDecisionResult = { status: "approved", meetingId, approvalStatus: "approved", mutationHash: expected, adoptionMode: request.adoptionMode };
         room.decisions[request.idempotencyKey] = approved;
         room.decisionFingerprints[request.idempotencyKey] = decisionFingerprint;
         try { await repository.commitApproval(identity.userId, room, { idempotencyKey: request.idempotencyKey, mutationHash: expected, mutations, sessionId, decisionLeaseToken, fence }); }

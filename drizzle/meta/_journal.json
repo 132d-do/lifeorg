@@ -43,6 +43,13 @@
       "when": 1786121780332,
       "tag": "0005_seven_day_decision_learning_loop",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786122688340,
+      "tag": "0006_decision_evidence",
+      "breakpoints": true
     }
   ]
 }

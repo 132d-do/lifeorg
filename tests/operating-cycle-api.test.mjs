@@ -128,6 +128,12 @@ test("approved meeting mutation creates the governed cycle exactly once", async 
     confidence: "medium",
     unknowns: [],
     disagreements: [],
+    centralAssumption: "七天聚焦论文比新增申请任务更能解除当前阻塞",
+    forecast: { observableOutcome: "到 2026-08-15 形成三段可评审提纲", confidencePercent: 72, evidenceThatChangesAdvice: ["导师要求在 48 小时内提交申请材料"] },
+    sevenDayValidationAction: "每天记录新增的可评审段落",
+    orchestrationVersion: "2026-08-08.v1",
+    promptVersion: "lifeorg-agents-2026-08-08.v1",
+    schemaVersion: "2026-08-08.v1",
     mutationPreview: [mutation],
   };
   const service = createMeetingService({ repository, deliberate: async () => ({ status: "ready", recommendation }) });
@@ -141,7 +147,7 @@ test("approved meeting mutation creates the governed cycle exactly once", async 
   await service.turn(userA, created.meetingId, { clientTurnId: "meeting-cycle-turn", message: "材料已经齐全" });
   const room = await service.get(userA, created.meetingId);
   const mutationHash = await canonicalMutationHash(room.recommendation.mutationPreview);
-  await service.decide(userA, created.meetingId, { action: "approve", idempotencyKey: "approve-cycle", mutationHash });
+  await service.decide(userA, created.meetingId, { action: "approve", idempotencyKey: "approve-cycle", mutationHash, adoptionMode: "full" });
   const active = repository.currentCycle(userA.userId);
   assert.equal(active.commitment, mutation.commitment);
   assert.equal(active.source.type, "approved_meeting");

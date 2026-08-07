@@ -85,6 +85,17 @@ export const FinalRecommendationSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]),
   unknowns: z.array(z.string().min(1).max(300)).max(8),
   disagreements: z.array(z.string().min(1).max(500)).max(8),
+  centralAssumption: z.string().min(3).max(500),
+  forecast: z.object({
+    observableOutcome: z.string().min(3).max(500),
+    confidencePercent: z.number().int().min(0).max(100),
+    evidenceThatChangesAdvice: z.array(z.string().min(3).max(300)).min(1).max(5),
+  }).strict(),
+  sevenDayValidationAction: z.string().min(3).max(500),
+  adoptionMode: z.enum(["full", "partial", "self_directed"]).optional(),
+  orchestrationVersion: z.string().min(1),
+  promptVersion: z.string().min(1),
+  schemaVersion: z.literal("2026-08-08.v1"),
   mutationPreview: z.array(MutationPreviewSchema).max(3).optional(),
 }).strict();
 

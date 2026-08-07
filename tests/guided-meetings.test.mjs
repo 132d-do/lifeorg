@@ -21,7 +21,16 @@ const evidence = [
   { id: "goal:12", type: "goal", title: "论文修改", summary: "本周完成讨论部分", updatedAt: "2026-07-18T00:00:00Z" },
   { id: "decision:7", type: "decision", title: "减少并行项目", summary: "本周只保留论文和运动", updatedAt: "2026-07-17T00:00:00Z" },
 ];
+const reliableFields = {
+  centralAssumption: "聚焦当前论文比新增并行项目更能解除阻塞",
+  forecast: { observableOutcome: "到复查日形成可检查的论文提纲", confidencePercent: 70, evidenceThatChangesAdvice: ["导师要求立即切换优先级"] },
+  sevenDayValidationAction: "连续七天记录论文提纲的实际增量",
+  orchestrationVersion: "2026-08-08.v1",
+  promptVersion: "lifeorg-agents-2026-08-08.v1",
+  schemaVersion: "2026-08-08.v1",
+};
 const recommendation = {
+  ...reliableFields,
   recommendation: "本周只推进论文讨论部分，并把新项目推迟到下周复查。",
   evidence: [
     { recordId: "goal:12", claim: "论文修改是当前周期目标" },
@@ -36,7 +45,15 @@ const recommendation = {
   confidence: "medium",
   unknowns: ["导师下一轮反馈时间"],
   disagreements: ["运营建议先排期，审计建议先确认导师预期"],
-  mutationPreview: [{ type: "goal.update", goalId: 12, progress: 70 }],
+  mutationPreview: [
+    { type: "goal.update", goalId: 12, progress: 70 },
+    {
+      type: "cycle.create", commitment: "完成论文讨论部分三段提纲",
+      startLocalDate: "2026-07-18", reviewLocalDate: "2026-07-22", timeZone: "Asia/Shanghai",
+      successCriterion: "形成三段各含一条文献依据的提纲",
+      stopOrAdjustCondition: "两次专注后仍无提纲则缩小为第一段",
+    },
+  ],
 };
 
 function createRequest(clientRequestId = "req-1") {
@@ -66,7 +83,8 @@ test("meeting lifecycle forbids readiness and approval shortcuts", () => {
 test("create contract is strict and approval accepts only governed actions", () => {
   assert.equal(MeetingCreateRequestSchema.safeParse(createRequest()).success, true);
   assert.equal(MeetingCreateRequestSchema.safeParse({ ...createRequest(), userId: userB.userId }).success, false);
-  assert.equal(MeetingDecisionRequestSchema.safeParse({ action: "approve", idempotencyKey: "approval-1", mutationHash: "a".repeat(64) }).success, true);
+  assert.equal(MeetingDecisionRequestSchema.safeParse({ action: "approve", idempotencyKey: "approval-1", mutationHash: "a".repeat(64), adoptionMode: "full" }).success, true);
+  assert.equal(MeetingDecisionRequestSchema.safeParse({ action: "approve", idempotencyKey: "approval-1", mutationHash: "a".repeat(64) }).success, false);
   assert.equal(MeetingDecisionRequestSchema.safeParse({ action: "force", idempotencyKey: "approval-1" }).success, false);
 });
 
@@ -125,10 +143,10 @@ test("ready recommendation cannot mutate domain records until exact approval", a
   assert.equal(ready.status, "ready");
   assert.equal(repository.goal(userA.userId, 12).progress, 46);
   const hash = await canonicalMutationHash(recommendation.mutationPreview);
-  await assert.rejects(service.decide(userA, meetingId, { action: "approve", idempotencyKey: "approval-1", mutationHash: "0".repeat(64) }), (error) => error.code === "mutation_mismatch");
+  await assert.rejects(service.decide(userA, meetingId, { action: "approve", idempotencyKey: "approval-1", mutationHash: "0".repeat(64), adoptionMode: "full" }), (error) => error.code === "mutation_mismatch");
   assert.equal(repository.goal(userA.userId, 12).progress, 46);
-  const approved = await service.decide(userA, meetingId, { action: "approve", idempotencyKey: "approval-1", mutationHash: hash });
-  const retry = await service.decide(userA, meetingId, { action: "approve", idempotencyKey: "approval-1", mutationHash: hash });
+  const approved = await service.decide(userA, meetingId, { action: "approve", idempotencyKey: "approval-1", mutationHash: hash, adoptionMode: "full" });
+  const retry = await service.decide(userA, meetingId, { action: "approve", idempotencyKey: "approval-1", mutationHash: hash, adoptionMode: "full" });
   assert.equal(approved.status, "approved");
   assert.deepEqual(retry, approved);
   assert.equal(repository.goal(userA.userId, 12).progress, 70);
@@ -157,7 +175,7 @@ test("decision outcome review appends immutable snapshot without rewriting the d
   const { meetingId } = await service.create(userA, createRequest("review-create"));
   await service.turn(userA, meetingId, { message: "记录实际结果", clientTurnId: "review-turn" });
   const hash = await canonicalMutationHash(reviewRecommendation.mutationPreview);
-  await service.decide(userA, meetingId, { action: "approve", idempotencyKey: "review-approval", mutationHash: hash });
+  await service.decide(userA, meetingId, { action: "approve", idempotencyKey: "review-approval", mutationHash: hash, adoptionMode: "full" });
   assert.deepEqual(repository.decision(userA.userId, 7), original);
   const reviews = repository.decisionReviews(userA.userId, 7);
   assert.equal(reviews.length, 1);
