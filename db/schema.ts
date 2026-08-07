@@ -162,3 +162,43 @@ export const reminders = sqliteTable("reminders", {
   createdAt: createdAt(),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const operatingCycles = sqliteTable("operating_cycles", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  clientRequestId: text("client_request_id").notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(),
+  activeSlot: text("active_slot"),
+  sourceType: text("source_type").notNull(),
+  sourceRecordId: text("source_record_id").notNull(),
+  sourceMutationHash: text("source_mutation_hash"),
+  commitment: text("commitment").notNull(),
+  startLocalDate: text("start_local_date").notNull(),
+  reviewLocalDate: text("review_local_date").notNull(),
+  timeZone: text("time_zone").notNull().default("Asia/Shanghai"),
+  successCriterion: text("success_criterion").notNull(),
+  stopOrAdjustCondition: text("stop_or_adjust_condition").notNull(),
+  status: text("status").notNull().default("active"),
+  projection: text("projection").notNull().default("{}"),
+  createdAt: createdAt(),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("operating_cycles_user_client_request_unique").on(table.userId, table.clientRequestId),
+  uniqueIndex("operating_cycles_user_active_slot_unique").on(table.userId, table.activeSlot),
+]);
+
+export const cycleEvents = sqliteTable("cycle_events", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  cycleId: text("cycle_id").notNull(),
+  clientRequestId: text("client_request_id").notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(),
+  sequence: integer("sequence").notNull(),
+  type: text("type").notNull(),
+  representedLocalDate: text("represented_local_date"),
+  payload: text("payload").notNull().default("{}"),
+  createdAt: createdAt(),
+}, (table) => [
+  uniqueIndex("cycle_events_user_cycle_client_request_unique").on(table.userId, table.cycleId, table.clientRequestId),
+  uniqueIndex("cycle_events_cycle_sequence_unique").on(table.cycleId, table.sequence),
+]);

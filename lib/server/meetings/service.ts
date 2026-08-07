@@ -12,6 +12,7 @@ import {
   type MeetingDecisionRequest,
 } from "./contracts.ts";
 import { applyMeetingEvent, initialMeetingLifecycle, type MeetingLifecycle } from "./state-machine.ts";
+import type { OperatingCycle } from "../cycles/repository.ts";
 
 export type MeetingMessage = {
   id: string;
@@ -94,6 +95,14 @@ function serverId(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+function numericMeetingId(meetingId: string) {
+  const numeric = Number(meetingId);
+  if (Number.isInteger(numeric) && numeric > 0) return numeric;
+  let hash = 0;
+  for (const character of meetingId) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return (hash % 2_000_000_000) + 1;
+}
+
 function titleFor(kind: MeetingCreateRequest["kind"]) {
   return kind === "daily" ? "每日站会" : kind === "weekly" ? "周经营会" : kind === "monthly" ? "月度战略会" : "专项决策会";
 }
@@ -104,6 +113,7 @@ export class InMemoryMeetingRepository implements MeetingRepository {
   private readonly goalsByUser: Record<string, Array<Record<string, unknown>>>;
   private readonly decisionsByUser: Record<string, Array<Record<string, unknown>>>;
   private readonly reviewsByUser: Record<string, Array<Record<string, unknown>>> = {};
+  private readonly cyclesByUser: Record<string, OperatingCycle[]> = {};
   private readonly approvalsByMeeting = new Map<string, MeetingDecisionResult>();
   private readonly turnClaims = new Map<string, { fingerprint: string; status: "pending" | "completed"; leaseToken: string; response?: MeetingTurnResult }>();
   private readonly decisionLeases = new Map<string, { idempotencyKey: string; fingerprint: string; leaseToken: string }>();
@@ -218,6 +228,14 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     const nextGoals = copy(this.goalsByUser[userId] ?? []);
     const nextDecisions = copy(this.decisionsByUser[userId] ?? []);
     const nextReviews = copy(this.reviewsByUser[userId] ?? []);
+    const nextCycles = copy(this.cyclesByUser[userId] ?? []);
+    if (input.mutations.filter((mutation) => mutation.type === "cycle.create").length > 1) {
+      throw new MeetingServiceError("invalid_state", "Only one cycle can be created by an approval");
+    }
+    if (input.mutations.some((mutation) => mutation.type === "cycle.create")
+      && nextCycles.some((cycle) => cycle.activeSlot === "primary")) {
+      throw new MeetingServiceError("invalid_state", "An active operating cycle already exists");
+    }
     for (const mutation of input.mutations) {
       if (mutation.type === "goal.update") {
         const goal = nextGoals.find((item) => item.id === mutation.goalId);
@@ -228,18 +246,30 @@ export class InMemoryMeetingRepository implements MeetingRepository {
         nextGoals.push({ ...copy(mutation), id: Math.max(0, ...nextGoals.map((item) => Number(item.id) || 0)) + 1, status: "active", progress: 0 });
       } else if (mutation.type === "decision.create") {
         nextDecisions.push({ ...copy(mutation), id: Math.max(0, ...nextDecisions.map((item) => Number(item.id) || 0)) + 1, status: "decided" });
-      } else {
+      } else if (mutation.type === "decision.reviewOutcome") {
         const decision = nextDecisions.find((item) => item.id === mutation.decisionId);
         if (!decision) throw new MeetingServiceError("invalid_evidence", "Decision not found");
         nextReviews.push({
           id: serverId("review"), decisionId: mutation.decisionId, outcome: mutation.outcome, observedAt: mutation.observedAt,
           decisionSnapshot: copy(decision), meetingId: room.id, mutationHash: input.mutationHash,
         });
+      } else {
+        const now = new Date().toISOString();
+        nextCycles.push({
+          id: crypto.randomUUID(), userId, clientRequestId: `meeting:${room.id}:${input.mutationHash}`,
+          activeSlot: "primary", source: { type: "approved_meeting", meetingId: numericMeetingId(room.id), mutationHash: input.mutationHash },
+          commitment: mutation.commitment, startLocalDate: mutation.startLocalDate,
+          reviewLocalDate: mutation.reviewLocalDate, timeZone: mutation.timeZone,
+          successCriterion: mutation.successCriterion, stopOrAdjustCondition: mutation.stopOrAdjustCondition,
+          status: "active", projection: mutation.predictionId ? { predictionId: mutation.predictionId } : {},
+          createdAt: now, updatedAt: now,
+        });
       }
     }
     this.goalsByUser[userId] = nextGoals;
     this.decisionsByUser[userId] = nextDecisions;
     this.reviewsByUser[userId] = nextReviews;
+    this.cyclesByUser[userId] = nextCycles;
     const approved = Object.values(room.decisions).find((decision) => decision.status === "approved") ?? { status: "approved", meetingId: room.id, approvalStatus: "approved", mutationHash: input.mutationHash };
     this.approvalsByMeeting.set(approvalKey, copy(approved));
     this.rooms.set(room.id, copy(room));
@@ -250,6 +280,8 @@ export class InMemoryMeetingRepository implements MeetingRepository {
   decision(userId: string, id: number) { return copy(this.decisionsByUser[userId]?.find((item) => item.id === id)); }
   decisionReviews(userId: string, id: number) { return copy((this.reviewsByUser[userId] ?? []).filter((item) => item.decisionId === id)); }
   approvalCount(userId: string, meetingId: string) { return this.approvalsByMeeting.has(`${userId}:${meetingId}`) ? 1 : 0; }
+  currentCycle(userId: string) { return copy((this.cyclesByUser[userId] ?? []).find((cycle) => cycle.activeSlot === "primary")); }
+  cycleCount(userId: string) { return (this.cyclesByUser[userId] ?? []).length; }
 }
 
 export function createMeetingService(dependencies: {
