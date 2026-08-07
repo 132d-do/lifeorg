@@ -38,6 +38,25 @@ const recommendation = {
   confidence: "medium",
   unknowns: ["导师下一轮反馈时间"],
   disagreements: ["运营建议先排期，审计建议先确认导师预期"],
+  centralAssumption: "聚焦论文讨论部分比并行启动新项目更能解除当前阻塞",
+  forecast: {
+    observableOutcome: "到 2026-07-22 形成三段各含一条文献依据的提纲",
+    confidencePercent: 70,
+    evidenceThatChangesAdvice: ["导师要求在 48 小时内优先提交另一项目材料"],
+  },
+  sevenDayValidationAction: "每天记录新增的可评审段落，并在复查日核对三段提纲",
+  orchestrationVersion: "2026-08-08.v1",
+  promptVersion: "lifeorg-agents-2026-08-08.v1",
+  schemaVersion: "2026-08-08.v1",
+  mutationPreview: [{
+    type: "cycle.create",
+    commitment: "完成论文讨论部分的三段提纲",
+    startLocalDate: "2026-07-18",
+    reviewLocalDate: "2026-07-22",
+    timeZone: "Asia/Shanghai",
+    successCriterion: "讨论部分形成不少于三段且每段包含一个文献依据",
+    stopOrAdjustCondition: "两次专注后仍无提纲则缩小为只重写第一段",
+  }],
 };
 
 test("registry exports exactly four real Agents with distinct governed contracts", () => {

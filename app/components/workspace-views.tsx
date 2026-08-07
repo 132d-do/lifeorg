@@ -208,6 +208,7 @@ type GuidedRoom = {
   id: string; clientRequestId: string; topic: string; kind: string; lifecycle: { status: string; phase: string; approvalStatus: string };
   records: Array<{ id: string; title: string; summary: string }>; messages: Array<{ id: string; role: string; content: unknown; createdAt: string }>;
   recommendation?: GuidedRecommendation; legacyInputs?: Record<string, unknown>; legacyAgentOutput?: Record<string, unknown>; mutationHash?: string;
+  orchestrationPolicy?: { mode: "fast" | "deep"; specialistRoles: string[]; policyVersion: string; reason: string };
   decisionHistory: Array<{ id: string; action: string; recommendationSnapshot: GuidedRecommendation; createdAt: string }>;
 };
 
@@ -222,6 +223,7 @@ export function GuidedMeetingRoom({ id }: { id: string }) {
   const [pending, setPending] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editedAdvice, setEditedAdvice] = useState("");
+  const [adoptionMode, setAdoptionMode] = useState<"full" | "partial" | "self_directed">("full");
 
   const load = useCallback(async () => {
     const response = await protectedFetch(`/api/meetings/${encodeURIComponent(id)}`);
@@ -239,7 +241,7 @@ export function GuidedMeetingRoom({ id }: { id: string }) {
 
   async function sendTurn(text: string, retryOf?: string) {
     if (!text.trim()) return;
-    setPending(true); setStatus("四名 Agent 正在按治理顺序处理材料…");
+    setPending(true); setStatus("Agent 正在按本次会议策略处理材料…");
     const operationKey = `lifeorg:meeting:${id}:pending-turn`;
     const operation = pendingOperation(window.sessionStorage, operationKey, { message: text.trim(), ...(retryOf ? { retryOf } : {}) });
     setHasPendingTurn(true);
@@ -257,7 +259,7 @@ export function GuidedMeetingRoom({ id }: { id: string }) {
       clearPendingOperation(window.sessionStorage, operationKey, operation.id); setHasPendingTurn(false);
       setTurn(result); setLastMessage(operation.payload.message); setLastTurnId(operation.id); setMessage("");
       if (result.status === "needs_input") setStatus("幕僚长还缺一条关键证据。");
-      else if (result.status === "deliberating") setStatus("三名专家已完成有边界的评议。");
+      else if (result.status === "deliberating") setStatus("本次召集的专家已完成有边界的评议。");
       else setStatus("具体建议已就绪，等待 CEO 批准、编辑或否决。");
       await load();
     } catch (error) { setStatus(error instanceof Error ? error.message : "本轮处理失败"); }
@@ -267,7 +269,7 @@ export function GuidedMeetingRoom({ id }: { id: string }) {
   async function decide(action: "approve" | "edit" | "reject") {
     if (!room?.recommendation) return;
     setPending(true);
-    const payload = action === "approve" ? { action, idempotencyKey: meetingApprovalKey(id), mutationHash: room.mutationHash }
+    const payload = action === "approve" ? { action, idempotencyKey: meetingApprovalKey(id), mutationHash: room.mutationHash, adoptionMode }
       : action === "edit" ? { action, idempotencyKey: crypto.randomUUID(), recommendation: { ...room.recommendation, recommendation: editedAdvice } }
       : { action, idempotencyKey: crypto.randomUUID() };
     try {
@@ -275,6 +277,7 @@ export function GuidedMeetingRoom({ id }: { id: string }) {
       const result = await response.json() as { status?: string; error?: string };
       if (!response.ok) throw new Error(result.error || "处理决定失败");
       setStatus(action === "approve" ? "已原子提交批准的变更。" : action === "edit" ? "修改稿已保存，尚未改变任何经营记录。" : "建议已否决，没有改变任何经营记录。");
+      if (action === "approve") setAdoptionMode("full");
       setEditing(false); await load();
     } catch (error) { setStatus(error instanceof Error ? error.message : "处理决定失败"); }
     finally { setPending(false); }

@@ -2,6 +2,7 @@ import type { Agent } from "@openai/agents";
 import { chiefOfStaffAgent, operationsOfficerAgent, riskAuditorAgent, strategyArchitectAgent } from "./registry.ts";
 import { AgentContributionSchema, CompletenessSchema, type AgentContribution, type EvidenceRecord, type MeetingTurnResponse } from "./schemas.ts";
 import { gateRecommendation } from "./quality-gate.ts";
+import { classifyMeetingMode, type MeetingPolicy, type MeetingPolicyInput } from "./meeting-policy.ts";
 
 export type RunRequest = {
   phase: "completeness" | "specialist" | "synthesis";
@@ -11,12 +12,31 @@ export type RunRequest = {
 };
 
 export type AgentExecutor = (request: RunRequest) => Promise<unknown>;
-export type InternalOrchestrationResult = { turn: MeetingTurnResponse; contributions: AgentContribution[] };
+export type InternalOrchestrationResult = { turn: MeetingTurnResponse; contributions: AgentContribution[]; policy: MeetingPolicy };
+
+type OrchestrationPacket = {
+  records: EvidenceRecord[];
+  topic: string;
+  latestUserMessage: string;
+  kind?: MeetingPolicyInput["kind"];
+  reversibility?: MeetingPolicyInput["reversibility"];
+  charterConflict?: boolean;
+  unknownCount?: number;
+  explicitDepth?: MeetingPolicyInput["explicitDepth"];
+  [key: string]: unknown;
+};
 
 export async function orchestrateMeetingTurnDetailed(
-  packet: { records: EvidenceRecord[]; topic: string; latestUserMessage: string },
+  packet: OrchestrationPacket,
   execute: AgentExecutor,
 ): Promise<InternalOrchestrationResult> {
+  const policy = classifyMeetingMode({
+    kind: packet.kind ?? "decision",
+    reversibility: packet.reversibility ?? "low",
+    charterConflict: packet.charterConflict ?? false,
+    unknownCount: packet.unknownCount ?? 0,
+    ...(packet.explicitDepth ? { explicitDepth: packet.explicitDepth } : {}),
+  });
   const runController = new AbortController();
   const completeness = CompletenessSchema.parse(await execute({ phase: "completeness", agent: chiefOfStaffAgent, input: packet, signal: runController.signal }));
   if (!completeness.sufficient) {
@@ -26,11 +46,16 @@ export async function orchestrateMeetingTurnDetailed(
         question: completeness.question ?? "请补充当前最关键的现实约束。",
         missingEvidence: completeness.missingEvidence,
       },
-      contributions: [],
+      contributions: [], policy,
     };
   }
 
-  const specialistAgents = [strategyArchitectAgent, operationsOfficerAgent, riskAuditorAgent];
+  const agentsByRole = {
+    strategy: strategyArchitectAgent,
+    operations: operationsOfficerAgent,
+    risk: riskAuditorAgent,
+  } as const;
+  const specialistAgents = policy.specialistRoles.map((role) => agentsByRole[role]);
   let contributions: AgentContribution[];
   try {
     contributions = await Promise.all(specialistAgents.map(async (agent) =>
@@ -43,14 +68,14 @@ export async function orchestrateMeetingTurnDetailed(
   const synthesis = await execute({
     phase: "synthesis",
     agent: chiefOfStaffAgent,
-    input: { ...packet, contributions },
+    input: { ...packet, meetingPolicy: policy, contributions },
     signal: runController.signal,
   });
-  return { turn: gateRecommendation(synthesis, packet.records), contributions };
+  return { turn: gateRecommendation(synthesis, packet.records), contributions, policy };
 }
 
 export async function orchestrateMeetingTurn(
-  packet: { records: EvidenceRecord[]; topic: string; latestUserMessage: string },
+  packet: OrchestrationPacket,
   execute: AgentExecutor,
 ): Promise<MeetingTurnResponse> {
   return (await orchestrateMeetingTurnDetailed(packet, execute)).turn;

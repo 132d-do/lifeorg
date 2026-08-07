@@ -202,3 +202,55 @@ export const cycleEvents = sqliteTable("cycle_events", {
   uniqueIndex("cycle_events_user_cycle_client_request_unique").on(table.userId, table.cycleId, table.clientRequestId),
   uniqueIndex("cycle_events_cycle_sequence_unique").on(table.cycleId, table.sequence),
 ]);
+
+export const evidenceItems = sqliteTable("evidence_items", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  decisionId: integer("decision_id").notNull(),
+  clientRequestId: text("client_request_id").notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  verification: text("verification").notNull(),
+  sourceType: text("source_type"),
+  sourceId: text("source_id"),
+  sourceSnapshot: text("source_snapshot").notNull().default("null"),
+  createdAt: createdAt(),
+}, (table) => [
+  uniqueIndex("evidence_items_user_client_request_unique").on(table.userId, table.clientRequestId),
+]);
+
+export const decisionForecasts = sqliteTable("decision_forecasts", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  decisionId: integer("decision_id").notNull(),
+  meetingId: integer("meeting_id"),
+  clientRequestId: text("client_request_id").notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(),
+  prediction: text("prediction").notNull(),
+  evidenceSnapshot: text("evidence_snapshot").notNull(),
+  confidence: integer("confidence").notNull(),
+  version: text("version").notNull().default("forecast-v1"),
+  createdAt: createdAt(),
+}, (table) => [
+  uniqueIndex("decision_forecasts_user_client_request_unique").on(table.userId, table.clientRequestId),
+]);
+
+export const recommendationEvaluations = sqliteTable("recommendation_evaluations", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  decisionId: integer("decision_id").notNull(),
+  meetingId: integer("meeting_id"),
+  cycleId: text("cycle_id"),
+  forecastId: text("forecast_id"),
+  recommendationSnapshot: text("recommendation_snapshot").notNull(),
+  observedEvidence: text("observed_evidence").notNull(),
+  actionCompletion: integer("action_completion").notNull(),
+  recommendationAccuracy: integer("recommendation_accuracy"),
+  decisionValue: integer("decision_value").notNull(),
+  version: text("version").notNull().default("evaluation-v1"),
+  createdAt: createdAt(),
+}, (table) => [
+  uniqueIndex("recommendation_evaluations_user_cycle_unique").on(table.userId, table.cycleId),
+]);

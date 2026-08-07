@@ -16,6 +16,10 @@ export const MeetingCreateRequestSchema = z.object({
     mood: z.string().min(1).max(40).optional(),
   }).strict(),
   evidence: z.array(EvidenceReferenceSchema).min(2).max(20),
+  explicitDepth: z.enum(["fast", "deep"]).optional(),
+  reversibility: z.enum(["high", "low"]).default("high"),
+  charterConflict: z.boolean().default(false),
+  unknownCount: z.number().int().min(0).max(20).default(0),
   lockedMutationIntent: z.object({
     type: z.literal("decision.reviewOutcome"),
     decisionId: z.number().int().positive(),
@@ -31,7 +35,7 @@ export const MeetingTurnRequestSchema = z.object({
 }).strict();
 
 export const MeetingDecisionRequestSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("approve"), idempotencyKey: z.string().min(6).max(200), mutationHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  z.object({ action: z.literal("approve"), idempotencyKey: z.string().min(6).max(200), mutationHash: z.string().regex(/^[a-f0-9]{64}$/), adoptionMode: z.enum(["full", "partial", "self_directed"]) }).strict(),
   z.object({ action: z.literal("edit"), idempotencyKey: z.string().min(6).max(200), recommendation: FinalRecommendationSchema }).strict(),
   z.object({ action: z.literal("reject"), idempotencyKey: z.string().min(6).max(200) }).strict(),
 ]);
