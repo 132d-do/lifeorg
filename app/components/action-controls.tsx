@@ -56,8 +56,8 @@ export function MoodChoices({ value, onChange }: { value: string; onChange: (val
   return <fieldset><legend>此刻状态</legend><div className="choice-row">{["积极", "平稳", "疲惫", "焦虑"].map((mood) => <button data-action="mood" className={value === mood ? "selected" : ""} type="button" aria-pressed={value === mood} key={mood} onClick={() => onChange(mood)}>{mood}</button>)}</div></fieldset>;
 }
 
-export function ActionForm({ onSubmit, children, submitLabel = "保存并继续" }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; children: ReactNode; submitLabel?: string }) {
-  return <form className="meeting-form" onSubmit={onSubmit}>{children}<button className="primary-button submit-button" data-action="submit" type="submit">{submitLabel}</button><button data-action="cancel" type="reset">取消本次编辑</button></form>;
+export function ActionForm({ onSubmit, children, submitLabel = "保存并继续", pending = false }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; children: ReactNode; submitLabel?: string; pending?: boolean }) {
+  return <form className="meeting-form" onSubmit={onSubmit}><fieldset className="form-fields" disabled={pending}>{children}</fieldset><button className="primary-button submit-button" data-action="submit" type="submit" disabled={pending}>{pending ? "正在保存…" : submitLabel}</button><button data-action="cancel" type="reset" disabled={pending}>重置输入</button></form>;
 }
 
 export function MeetingActions({ onAnalyze, onReject, onApprove, busy = false }: { onAnalyze: () => void; onReject: () => void; onApprove: () => void; busy?: boolean }) {

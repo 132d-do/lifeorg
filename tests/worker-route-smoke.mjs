@@ -24,6 +24,7 @@ const routes = [
   "/goals",
   "/goals/new",
   "/goals/fixture-goal",
+  "/goals/fixture-goal/edit",
   "/decisions",
   "/decisions/new",
   "/decisions/fixture-decision",
@@ -31,6 +32,10 @@ const routes = [
   "/insights",
   "/settings/profile",
   "/settings/agents",
+  "/settings/agents/chief",
+  "/settings/agents/strategy",
+  "/settings/agents/operations",
+  "/settings/agents/risk",
   "/settings/integrations/openai",
 ];
 
