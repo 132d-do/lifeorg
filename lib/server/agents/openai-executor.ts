@@ -1,4 +1,4 @@
-import { OpenAIProvider, run, type Agent } from "@openai/agents";
+import { OpenAIProvider, Runner, type ModelProvider } from "@openai/agents";
 import { z } from "zod";
 import type { AgentExecutor } from "./orchestrate.ts";
 import { ChiefOutputSchema } from "./schemas.ts";
@@ -70,19 +70,21 @@ function usageFromResponses(result: { rawResponses?: Array<{ usage?: { inputToke
 export function createOpenAIAgentExecutor(
   apiKey: string,
   timeoutMs = 25_000,
-  options: { onRun?: (observation: AgentExecutionObservation) => void | Promise<void> } = {},
+  options: { onRun?: (observation: AgentExecutionObservation) => void | Promise<void>; modelProvider?: ModelProvider } = {},
 ): AgentExecutor {
   const provider = new OpenAIProvider({ apiKey, useResponses: true });
+  const runner = new Runner({
+    modelProvider: options.modelProvider ?? provider,
+    modelSettings: { store: OPENAI_PRIVACY_OPTIONS.store },
+    tracingDisabled: OPENAI_PRIVACY_OPTIONS.tracingDisabled,
+    traceIncludeSensitiveData: OPENAI_PRIVACY_OPTIONS.traceIncludeSensitiveData,
+  });
   return async ({ agent, phase, input, signal: parentSignal }) => {
     const startedAt = Date.now();
     const model = typeof agent.model === "string" ? agent.model : agent.name;
     let usage = { inputTokens: 0, outputTokens: 0 };
     try {
-      const result = await runWithTimeout((signal) => run(agent as Agent, JSON.stringify({ phase, evidencePacket: input }), {
-          modelProvider: provider,
-          modelSettings: { store: OPENAI_PRIVACY_OPTIONS.store },
-          tracingDisabled: OPENAI_PRIVACY_OPTIONS.tracingDisabled,
-          traceIncludeSensitiveData: OPENAI_PRIVACY_OPTIONS.traceIncludeSensitiveData,
+      const result = await runWithTimeout((signal) => runner.run(agent, JSON.stringify({ phase, evidencePacket: input }), {
           maxTurns: 1,
           signal,
         }), timeoutMs, parentSignal);
@@ -95,8 +97,8 @@ export function createOpenAIAgentExecutor(
         if (chief.mode === "recommendation") throw new AgentExecutionError("invalid_output");
           output = { sufficient: chief.sufficient, question: chief.question, missingEvidence: chief.missingEvidence };
         } else {
-          if (chief.mode !== "recommendation") throw new AgentExecutionError("invalid_output");
-          output = chief.recommendation;
+          if (chief.mode === "complete") throw new AgentExecutionError("invalid_output");
+          output = chief.mode === "needs_input" ? { status: "needs_input", question: chief.question, missingEvidence: chief.missingEvidence } : chief.recommendation;
         }
       }
       try { await options.onRun?.({ phase, model, durationMs: Math.max(0, Date.now() - startedAt), ...usage, status: "ready", errorClass: null }); }

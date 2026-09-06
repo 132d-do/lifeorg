@@ -62,6 +62,7 @@ export type MeetingTurnResult = MeetingTurnResponse | {
 };
 
 export type MeetingDecisionResult = {
+  adoptionMode?: "full" | "partial" | "self_directed";
   status: "approved" | "ready" | "draft";
   meetingId: string;
   approvalStatus: "approved" | "pending";
@@ -78,6 +79,7 @@ export class MeetingServiceError extends Error {
 }
 
 export interface MeetingRepository {
+  activeCycleEvidence(userId: string): Promise<EvidenceRecord | null>;
   findByClientRequest(userId: string, clientRequestId: string): Promise<MeetingRoom | null>;
   createMeeting(userId: string, request: MeetingCreateRequest, fingerprint: string, records: EvidenceRecord[]): Promise<MeetingRoom>;
   getMeeting(userId: string, meetingId: string): Promise<MeetingRoom | null>;
@@ -112,6 +114,10 @@ function titleFor(kind: MeetingCreateRequest["kind"]) {
 }
 
 export class InMemoryMeetingRepository implements MeetingRepository {
+  async activeCycleEvidence(userId: string) {
+    const cycle = this.currentCycle(userId);
+    return cycle ? { id: `cycle:${cycle.id}`, type: "cycle", title: cycle.commitment, summary: JSON.stringify(cycle), updatedAt: cycle.updatedAt } : null;
+  }
   private readonly rooms = new Map<string, MeetingRoom>();
   private readonly recordsByUser: Record<string, EvidenceRecord[]>;
   private readonly goalsByUser: Record<string, Array<Record<string, unknown>>>;
@@ -235,6 +241,10 @@ export class InMemoryMeetingRepository implements MeetingRepository {
     const nextDecisions = copy(this.decisionsByUser[userId] ?? []);
     const nextReviews = copy(this.reviewsByUser[userId] ?? []);
     const nextCycles = copy(this.cyclesByUser[userId] ?? []);
+    const linked = room.recommendation?.existingCycle;
+    if (linked && !nextCycles.some((cycle) => `cycle:${cycle.id}` === linked.recordId && cycle.activeSlot === "primary" && cycle.updatedAt === linked.updatedAt)) {
+      throw new MeetingServiceError("invalid_state", "Linked operating cycle has changed");
+    }
     if (input.mutations.filter((mutation) => mutation.type === "cycle.create").length > 1) {
       throw new MeetingServiceError("invalid_state", "Only one cycle can be created by an approval");
     }
@@ -357,12 +367,16 @@ export function createMeetingService(dependencies: {
       };
       appendMessage("user", { message: request.message }, { source: "user" }, request.clientTurnId);
       try {
+        const currentCycle = await repository.activeCycleEvidence(identity.userId);
+        room.records = room.records.filter((record) => record.type !== "cycle");
+        if (currentCycle) room.records.push(currentCycle);
         const deliberation = await deliberate({
           records: room.records, topic: room.topic, latestUserMessage: request.message,
           kind: room.kind, ...room.policyInput, intake: room.intake, messages: copy(room.messages),
           ...(room.lockedMutationIntent ? { lockedMutationIntent: room.lockedMutationIntent } : {}),
         }, request.message);
-        const result = "turn" in deliberation ? deliberation.turn : deliberation;
+        let result = "turn" in deliberation ? deliberation.turn : deliberation;
+        if (result.status === "ready") result = gateRecommendation(result.recommendation, room.records);
         const contributions = "turn" in deliberation ? deliberation.contributions : result.status === "deliberating" ? result.contributions : [];
         if ("turn" in deliberation && deliberation.policy) room.orchestrationPolicy = copy(deliberation.policy);
         if (result.status === "ready" && room.lockedMutationIntent) {
@@ -377,6 +391,7 @@ export function createMeetingService(dependencies: {
           }
         }
         if (result.status === "needs_input") {
+          for (const contribution of contributions) appendMessage(contribution.role as MeetingMessage["role"], contribution, { source: "openai", agent: contribution.role, model: "gpt-5.6-terra", phase: "specialist" });
           room.lifecycle = applyMeetingEvent(room.lifecycle, { type: "needs_input" });
           appendMessage("system", result, { source: "openai", agent: "chiefOfStaffAgent", model: "gpt-5.6-sol", phase: "completeness" });
         } else if (result.status === "deliberating") {

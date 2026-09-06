@@ -52,7 +52,7 @@ export function createDecisionEvidenceService(dependencies: {
     async list(identity: Identity, decisionId: number) {
       await requireDecision(identity, decisionId);
       const items = await repository.list(identity.userId, decisionId);
-      const groups = Object.fromEntries(EvidenceKindSchema.options.map((kind) => [kind, []])) as Record<(typeof EvidenceKindSchema.options)[number], typeof items>;
+      const groups: Record<(typeof EvidenceKindSchema.options)[number], typeof items> = { fact: [], preference: [], assumption: [], unknown: [], alternative: [], historical_analogue: [] };
       for (const item of items) groups[item.kind].push(item);
       return { groups, recommendedRecords: await recommendRecords(identity.userId, decisionId) };
     },

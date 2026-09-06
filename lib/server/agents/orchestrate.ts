@@ -1,6 +1,7 @@
-import type { Agent } from "@openai/agents";
+import type { Agent, AgentOutputType } from "@openai/agents";
 import { chiefOfStaffAgent, operationsOfficerAgent, riskAuditorAgent, strategyArchitectAgent } from "./registry.ts";
-import { AgentContributionSchema, CompletenessSchema, type AgentContribution, type EvidenceRecord, type MeetingTurnResponse } from "./schemas.ts";
+import { AgentContributionSchema, CompletenessSchema, MeetingTurnResponseSchema, type AgentContribution, type EvidenceRecord, type MeetingTurnResponse } from "./schemas.ts";
+import { meetingAgendas } from "../../agent-contracts.ts";
 import { gateRecommendation } from "./quality-gate.ts";
 import { classifyMeetingMode, type MeetingPolicy, type MeetingPolicyInput } from "./meeting-policy.ts";
 import { AgentRunMetadataSchema, type AgentRunMetadata } from "../observability/agent-run-metadata.ts";
@@ -13,7 +14,7 @@ export function observeAgentRunMetadata(candidate: unknown, observer?: (metadata
 
 export type RunRequest = {
   phase: "completeness" | "specialist" | "synthesis";
-  agent: Agent;
+  agent: Agent<unknown, AgentOutputType>;
   input: Record<string, unknown>;
   signal: AbortSignal;
 };
@@ -37,6 +38,7 @@ export async function orchestrateMeetingTurnDetailed(
   packet: OrchestrationPacket,
   execute: AgentExecutor,
 ): Promise<InternalOrchestrationResult> {
+  packet = { ...packet, agenda: meetingAgendas[packet.kind ?? "decision"], serverNow: new Date().toISOString() };
   const policy = classifyMeetingMode({
     kind: packet.kind ?? "decision",
     reversibility: packet.reversibility ?? "low",
@@ -65,9 +67,13 @@ export async function orchestrateMeetingTurnDetailed(
   const specialistAgents = policy.specialistRoles.map((role) => agentsByRole[role]);
   let contributions: AgentContribution[];
   try {
-    contributions = await Promise.all(specialistAgents.map(async (agent) =>
-      AgentContributionSchema.parse(await execute({ phase: "specialist", agent, input: packet, signal: runController.signal })),
-    ));
+    contributions = await Promise.all(specialistAgents.map(async (agent) => {
+      const contribution = AgentContributionSchema.parse(await execute({ phase: "specialist", agent, input: packet, signal: runController.signal }));
+      if (contribution.role !== agent.name || contribution.evidenceIds.some((id) => !packet.records.some((record) => record.id === id))) {
+        throw Object.assign(new Error("Invalid specialist identity or evidence"), { code: "invalid_output" });
+      }
+      return contribution;
+    }));
   } catch (error) {
     runController.abort();
     throw error;
@@ -78,7 +84,8 @@ export async function orchestrateMeetingTurnDetailed(
     input: { ...packet, meetingPolicy: policy, contributions },
     signal: runController.signal,
   });
-  return { turn: gateRecommendation(synthesis, packet.records), contributions, policy };
+  const clarification = MeetingTurnResponseSchema.safeParse(synthesis);
+  return { turn: clarification.success && clarification.data.status === "needs_input" ? clarification.data : gateRecommendation(synthesis, packet.records), contributions, policy };
 }
 
 export async function orchestrateMeetingTurn(
