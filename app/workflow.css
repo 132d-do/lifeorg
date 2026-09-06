@@ -1,0 +1,19 @@
+.form-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 18px; }
+.workspace p, .workspace li, .workspace dd, .meeting-form input, .meeting-form textarea, .meeting-form select { font-size: 16px; line-height: 1.65; }
+.workspace label, .workspace dt, .workspace button, .workspace small, .workspace .tag { font-size: 14px; }
+.meeting-actions { flex-wrap: wrap; gap: 14px; }
+.meeting-actions a, .decision-list > a { min-height: 44px; display: inline-flex; align-items: center; }
+.message-history p, .message-history dd, .recommendation-effects dd { overflow-wrap: anywhere; white-space: pre-wrap; }
+.message-history article { padding: 18px; border-bottom: 1px solid var(--line); }
+.message-history dl > div, .recommendation-effects dl > div { display: grid; grid-template-columns: minmax(110px, 1fr) 3fr; gap: 16px; padding-block: 8px; }
+.settings-grid .goal-grid { grid-template-columns: 1fr; }
+.workspace :focus-visible { outline: 3px solid #b6a151; outline-offset: 4px; }
+@media (max-width: 690px) {
+  .nav-list { display: grid; grid-template-columns: repeat(7, minmax(82px, 1fr)); overflow-x: auto; }
+  .nav-item { font-size: 14px; min-height: 60px; }
+  .sidebar { height: 84px; }
+  .workspace { padding-bottom: 110px; }
+  .openai-status { font-size: 14px; min-height: 38px; }
+  .message-history dl > div, .recommendation-effects dl > div { grid-template-columns: 1fr; gap: 4px; }
+  .meeting-actions { align-items: stretch; }
+}

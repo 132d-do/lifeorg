@@ -5,8 +5,8 @@ import { createSessionFetch } from "../../../lib/client/session-bootstrap";
 
 export type Profile = { displayName: string; vision: string; values: string; constraints: string };
 export type Goal = { id: number; title: string; domain: string; horizon: string; why: string; progress: number; status: string };
-export type Meeting = { id: number; type: string; title: string; energy: number | null; mood: string | null; summary: string; createdAt: string };
-export type Decision = { id: number; title: string; choice: string; reason: string; status: string; reviewAt: string | null; createdAt: string };
+export type Meeting = { id: number; type: string; title: string; topic?: string; lifecycleStatus?: string; approvalStatus?: string; energy: number | null; mood: string | null; summary: string; createdAt: string };
+export type Decision = { id: number; title: string; options?: string[]; choice: string; reason: string; status: string; reviewAt: string | null; createdAt: string };
 export type Reminder = { id: number; title: string; time: string; weekday: number | null; enabled: boolean };
 export type LifeState = { profile: Profile; goals: Goal[]; meetings: Meeting[]; decisions: Decision[]; reminders: Reminder[] };
 
@@ -44,14 +44,13 @@ export function useLifeState() {
     const response = await protectedFetch("/api/state", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, payload }),
     });
-    const result = await response.json() as { data?: LifeState; error?: string };
+    const result = await response.json() as { data?: LifeState; error?: string; createdId?: number };
     if (!response.ok || !result.data) {
       setStatus("保存失败"); throw new Error(result.error || "保存失败");
     }
     setData(result.data); setStatus("个人记录已同步");
-    return result.data;
+    return { ...result.data, createdId: result.createdId };
   }
 
   return { data, status, notice, retry: () => void load(), mutate };
 }
-

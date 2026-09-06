@@ -43,7 +43,7 @@ export function CycleCheckIn({ id }: { id: string }) {
     try {
       const response = await protectedFetch(`/api/cycles/${encodeURIComponent(id)}/check-ins`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error || "记录失败");
+      if (!response.ok) { if ([400, 409, 422].includes(response.status)) window.sessionStorage.removeItem(storageKey); throw new Error(body.error || "记录失败"); }
       window.sessionStorage.removeItem(storageKey);
       setStatus("今天的事实已经加入周期时间线。");
     } catch (error) { setStatus(error instanceof Error ? error.message : "记录失败；重试会沿用同一请求，不会重复写入。"); }

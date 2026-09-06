@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 import { AppShell } from "../../components/app-shell";
 import { protectedFetch, useLifeState } from "../shared/use-life-state";
@@ -15,6 +15,7 @@ function localDate(offsetDays = 0) {
 export function CycleCreate() {
   const state = useLifeState();
   const router = useRouter();
+  const search = useSearchParams();
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(false);
   const goals = useMemo(() => state.data.goals.filter((goal) => goal.status === "active"), [state.data.goals]);
@@ -37,7 +38,7 @@ export function CycleCreate() {
     try {
       const response = await protectedFetch("/api/cycles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body = await response.json() as { cycle?: { id: string }; error?: string };
-      if (!response.ok || !body.cycle) throw new Error(body.error === "active_cycle_exists" ? "已有进行中的唯一承诺，请先完成或停止它。" : body.error || "周期创建失败");
+      if (!response.ok || !body.cycle) { if ([400, 409, 422].includes(response.status)) window.sessionStorage.removeItem(storageKey); throw new Error(body.error === "active_cycle_exists" ? "已有进行中的唯一承诺，请先完成或停止它。" : body.error || "周期创建失败"); }
       window.sessionStorage.removeItem(storageKey); router.push(`/cycles/${body.cycle.id}`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "周期创建失败"); }
     finally { setPending(false); }
@@ -46,7 +47,7 @@ export function CycleCreate() {
   return <AppShell section="cycles" status={status || state.status}><div className="content-stack cycle-cockpit">
     <section className="card section-card"><p className="section-kicker">MANUAL SEVEN-DAY CYCLE</p><h2>从已有目标开启一个可验证承诺</h2><p>不需要等待 Agent。只选一个当前目标，把它缩小成七天内能观察结果的行动。</p></section>
     <section className="card section-card">{goals.length ? <form className="meeting-form" onSubmit={(event) => void submit(event)}>
-      <label>关联目标<select required name="goalId">{goals.map((goal) => <option value={goal.id} key={goal.id}>{goal.title}</option>)}</select></label>
+      <label>关联目标<select required name="goalId" defaultValue={search.get("goalId") || undefined}>{goals.map((goal) => <option value={goal.id} key={goal.id}>{goal.title}</option>)}</select></label>
       <label>未来七天唯一承诺<textarea required minLength={3} name="commitment" /></label>
       <div className="form-grid"><label>开始日期<input required type="date" name="startLocalDate" defaultValue={localDate()} /></label><label>复盘日期<input required type="date" name="reviewLocalDate" defaultValue={localDate(7)} /></label></div>
       <label>可验收的成功标准<textarea required minLength={3} name="successCriterion" /></label>

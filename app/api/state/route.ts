@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { GoalEditSchema } from "../../../lib/goal-contracts.ts";
 import { env } from "cloudflare:workers";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
@@ -15,14 +17,6 @@ function parseJson<T>(value: string, fallback: T): T { try { return JSON.parse(v
 async function seedUser(userId: string, displayName: string) {
   const db = getDb();
   await db.insert(profiles).values({ userId, displayName }).onConflictDoNothing();
-  const [goal] = await db.select({ id: goals.id }).from(goals).where(eq(goals.userId, userId)).limit(1);
-  if (!goal) await db.insert(goals).values([
-    { userId, title: "形成稳定且有辨识度的研究方向", domain: "科研", horizon: "年度", why: "为长期研究发展建立积累", progress: 46 },
-    { userId, title: "完成当前论文的创新性重构", domain: "科研", horizon: "季度", why: "把已有结果转化为更有解释力的贡献", progress: 62 },
-    { userId, title: "保留运动和真正的休息", domain: "生活", horizon: "长期", why: "维持创造力与可持续节奏", progress: 58 },
-  ]);
-  const [decision] = await db.select({ id: decisions.id }).from(decisions).where(eq(decisions.userId, userId)).limit(1);
-  if (!decision) await db.insert(decisions).values({ userId, title: "科研与休息的时间分配", options: asJson(["全部投入科研", "科研优先并保留固定休息"]), choice: "科研优先并保留固定休息", reason: "长期产出依赖可持续节奏", status: "review", reviewAt: new Date(Date.now() + 7 * 86400000).toISOString() });
   const [reminder] = await db.select({ id: reminders.id }).from(reminders).where(eq(reminders.userId, userId)).limit(1);
   if (!reminder) await db.insert(reminders).values([
     { userId, kind: "daily", title: "每日站会", time: "09:00", enabled: true },
@@ -72,12 +66,18 @@ export async function POST(request: Request) {
     const payload = body.payload ?? {};
     const db = getDb();
     const userId = identity.userId;
+    let createdId: number | undefined;
     if (action === "profile.update") {
       await db.update(profiles).set({ displayName: asText(payload.displayName, identity.displayName), vision: asText(payload.vision), values: asText(payload.values), constraints: asText(payload.constraints), updatedAt: new Date().toISOString() }).where(eq(profiles.userId, userId));
     } else if (action === "goal.create") {
       const title = asText(payload.title);
       if (!title) return Response.json({ error: "目标名称不能为空" }, { status: 400 });
-      await db.insert(goals).values({ userId, title, domain: asText(payload.domain, "成长"), horizon: asText(payload.horizon, "季度"), why: asText(payload.why), progress: Math.max(0, Math.min(100, asNumber(payload.progress))) });
+      const [created] = await db.insert(goals).values({ userId, title, domain: asText(payload.domain, "成长"), horizon: asText(payload.horizon, "季度"), why: asText(payload.why), progress: Math.max(0, Math.min(100, asNumber(payload.progress))) }).returning({ id: goals.id });
+      createdId = created.id;
+    } else if (action === "goal.update") {
+      const input = GoalEditSchema.parse(payload);
+      const [updated] = await db.update(goals).set({ ...input, updatedAt: new Date().toISOString() }).where(and(eq(goals.id, input.id), eq(goals.userId, userId))).returning({ id: goals.id });
+      if (!updated) return Response.json({ error: "目标不存在" }, { status: 404 });
     } else if (action === "goal.progress") {
       await db.update(goals).set({ progress: Math.max(0, Math.min(100, asNumber(payload.progress))), updatedAt: new Date().toISOString() }).where(and(eq(goals.id, asNumber(payload.id)), eq(goals.userId, userId)));
     } else if (action === "goal.delete") {
@@ -90,15 +90,17 @@ export async function POST(request: Request) {
     } else if (action === "decision.create") {
       const title = asText(payload.title); const choice = asText(payload.choice);
       if (!title || !choice) return Response.json({ error: "决策主题与最终选择不能为空" }, { status: 400 });
-      await db.insert(decisions).values({ userId, title, options: asJson(payload.options), choice, reason: asText(payload.reason), status: "decided", agentOutput: asJson(payload.agentOutput), reviewAt: new Date(Date.now() + 7 * 86400000).toISOString() });
+      const [created] = await db.insert(decisions).values({ userId, title, options: asJson(payload.options), choice, reason: asText(payload.reason), status: "decided", agentOutput: asJson(payload.agentOutput), reviewAt: new Date(Date.now() + 7 * 86400000).toISOString() }).returning({ id: decisions.id });
+      createdId = created.id;
     } else if (action === "decision.review") {
       await db.update(decisions).set({ status: asText(payload.status, "reviewed"), updatedAt: new Date().toISOString() }).where(and(eq(decisions.id, asNumber(payload.id)), eq(decisions.userId, userId)));
     } else if (action === "reminder.update") {
       await db.update(reminders).set({ enabled: Boolean(payload.enabled), time: asText(payload.time, "09:00"), updatedAt: new Date().toISOString() }).where(and(eq(reminders.id, asNumber(payload.id)), eq(reminders.userId, userId)));
     } else return Response.json({ error: "不支持的操作" }, { status: 400 });
-    return Response.json({ data: await stateFor(userId) });
+    return Response.json({ data: await stateFor(userId), createdId });
   } catch (error) {
     if (error instanceof IdentityError) return Response.json({ error: error.message }, { status: 401 });
+    if (error instanceof z.ZodError) return Response.json({ error: "请检查必填字段、目标状态与进度" }, { status: 400 });
     return Response.json({ error: "保存失败" }, { status: 500 });
   }
 }
