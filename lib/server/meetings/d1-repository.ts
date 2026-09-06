@@ -53,6 +53,10 @@ async function hydrate(row: typeof meetings.$inferSelect): Promise<MeetingRoom> 
 }
 
 export class D1MeetingRepository implements MeetingRepository {
+  async activeCycleEvidence(userId: string): Promise<EvidenceRecord | null> {
+    const [cycle] = await getDb().select().from(operatingCycles).where(and(eq(operatingCycles.userId, userId), eq(operatingCycles.activeSlot, "primary"))).limit(1);
+    return cycle ? { id: `cycle:${cycle.id}`, type: "cycle", title: cycle.commitment, summary: JSON.stringify({ commitment: cycle.commitment, reviewLocalDate: cycle.reviewLocalDate, timeZone: cycle.timeZone, successCriterion: cycle.successCriterion, stopOrAdjustCondition: cycle.stopOrAdjustCondition, status: cycle.status }), updatedAt: cycle.updatedAt } : null;
+  }
   async findByClientRequest(userId: string, clientRequestId: string) {
     const [row] = await getDb().select().from(meetings).where(and(eq(meetings.userId, userId), eq(meetings.clientRequestId, clientRequestId))).limit(1);
     return row ? hydrate(row) : null;
@@ -221,10 +225,11 @@ export class D1MeetingRepository implements MeetingRepository {
     }
     const decisionGuard = "EXISTS (SELECT 1 FROM meeting_decision_leases WHERE meeting_id=? AND user_id=? AND idempotency_key=? AND lease_token=?)";
     const meetingGuard = "EXISTS (SELECT 1 FROM meetings WHERE id=? AND user_id=? AND lifecycle_status='ready' AND updated_at=? AND final_recommendation=?)";
-    const cycleGuard = cycleIdForApproval ? " AND NOT EXISTS (SELECT 1 FROM operating_cycles WHERE user_id=? AND active_slot='primary' AND id <> ?)" : "";
+    const linked = room.recommendation?.existingCycle;
+    const cycleGuard = cycleIdForApproval ? " AND NOT EXISTS (SELECT 1 FROM operating_cycles WHERE user_id=? AND active_slot='primary' AND id <> ?)" : linked ? " AND EXISTS (SELECT 1 FROM operating_cycles WHERE user_id=? AND id=? AND active_slot='primary' AND updated_at=?)" : "";
     const approvalGuard = `${decisionGuard} AND ${meetingGuard}${cycleGuard}`;
     const guardBindings = [meetingId, userId, input.idempotencyKey, input.decisionLeaseToken, meetingId, userId, input.fence.updatedAt, input.fence.finalRecommendation,
-      ...(cycleIdForApproval ? [userId, cycleIdForApproval] : [])];
+      ...(cycleIdForApproval ? [userId, cycleIdForApproval] : linked ? [userId, linked.recordId.slice(6), linked.updatedAt] : [])];
     const statements: Array<ReturnType<typeof env.DB.prepare>> = [];
     for (const mutation of input.mutations) {
       if (mutation.type === "goal.update") {

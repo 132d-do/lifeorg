@@ -56,6 +56,26 @@ const recommendation = {
   ],
 };
 
+test("second meeting links the existing cycle without creating another, and rejects a foreign link", async () => {
+  const repository = new InMemoryMeetingRepository({ recordsByUser: { [userA.userId]: evidence }, goalsByUser: { [userA.userId]: [{ id: 12, progress: 0 }] } });
+  const service = createMeetingService({ repository, deliberate: async (packet) => {
+    const cycle = packet.records.find((record) => record.type === "cycle");
+    return { status: "ready", recommendation: cycle ? { ...recommendation, existingCycle: { recordId: cycle.id, updatedAt: cycle.updatedAt }, mutationPreview: [] } : recommendation };
+  }});
+  for (let index = 0; index < 2; index++) {
+    const { meetingId } = await service.create(userA, createRequest(`repeat-${index}`));
+    const turn = await service.turn(userA, meetingId, { clientTurnId: `turn-repeat-${index}`, message: "请按当前承诺安排今天" });
+    assert.equal(turn.status, "ready");
+    if (index === 1) {
+      assert.equal(turn.recommendation.existingCycle.recordId, `cycle:${repository.currentCycle(userA.userId).id}`);
+      await assert.rejects(service.decide(userA, meetingId, { action: "edit", idempotencyKey: "foreign-cycle", recommendation: { ...turn.recommendation, existingCycle: { recordId: "cycle:other-user", updatedAt: "2026-09-05" } } }), (error) => error.code === "invalid_evidence");
+    }
+    const room = await service.get(userA, meetingId);
+    await service.decide(userA, meetingId, { action: "approve", idempotencyKey: `approve-repeat-${index}`, mutationHash: room.mutationHash, adoptionMode: "full" });
+  }
+  assert.equal(repository.cycleCount(userA.userId), 1);
+});
+
 function createRequest(clientRequestId = "req-1") {
   return {
     clientRequestId,

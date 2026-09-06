@@ -14,7 +14,13 @@ export const AgentContributionSchema = z.object({
   evidenceIds: z.array(z.string().min(1)).min(1).max(8),
   uncertainty: z.string().max(500),
   disagreements: z.array(z.string().max(500)).max(5),
+  assessment: z.record(z.string(), z.string().min(3).max(1200)).optional(),
 }).strict();
+
+const finding = z.string().min(3).max(1200);
+export const StrategyOutputSchema = AgentContributionSchema.extend({ role: z.literal("strategyArchitectAgent"), assessment: z.object({ charterFit: finding, alternatives: finding, pivotEvidence: finding }).strict() });
+export const OperationsOutputSchema = AgentContributionSchema.extend({ role: z.literal("operationsOfficerAgent"), assessment: z.object({ capacity: finding, dependency: finding, firstAction: finding, defer: finding }).strict() });
+export const RiskOutputSchema = AgentContributionSchema.extend({ role: z.literal("riskAuditorAgent"), assessment: z.object({ counterEvidence: finding, failureMode: finding, stopRule: finding, verification: finding }).strict() });
 
 export const CompletenessSchema = z.object({
   sufficient: z.boolean(),
@@ -71,6 +77,7 @@ export const MutationPreviewSchema = z.discriminatedUnion("type", [
 ]);
 
 export const FinalRecommendationSchema = z.object({
+  existingCycle: z.object({ recordId: z.string().startsWith("cycle:"), updatedAt: z.string().min(1) }).strict().optional(),
   recommendation: z.string().min(8).max(240),
   evidence: z.array(z.object({
     recordId: z.string().min(1),
@@ -99,29 +106,19 @@ export const FinalRecommendationSchema = z.object({
   mutationPreview: z.array(MutationPreviewSchema).max(3).optional(),
 }).strict();
 
-export const ChiefOutputSchema = z.discriminatedUnion("mode", [
-  z.object({
-    mode: z.literal("needs_input"),
-    sufficient: z.literal(false),
-    question: z.string().min(1),
-    missingEvidence: z.array(z.string().min(1)).min(1).max(8),
-    recommendation: z.null(),
-  }).strict(),
-  z.object({
-    mode: z.literal("complete"),
-    sufficient: z.literal(true),
-    question: z.null(),
-    missingEvidence: z.array(z.never()).max(0),
-    recommendation: z.null(),
-  }).strict(),
-  z.object({
-    mode: z.literal("recommendation"),
-    sufficient: z.literal(true),
-    question: z.null(),
-    missingEvidence: z.array(z.never()).max(0),
-    recommendation: FinalRecommendationSchema,
-  }).strict(),
-]);
+// Responses structured outputs require an object at the schema root.
+// Enforce discriminant consistency locally as well as in the role instructions.
+export const ChiefOutputSchema = z.object({
+  mode: z.enum(["needs_input", "complete", "recommendation"]),
+  sufficient: z.boolean(), question: z.string().min(1).nullable(),
+  missingEvidence: z.array(z.string().min(1)).max(8),
+  recommendation: FinalRecommendationSchema.nullable(),
+}).strict().superRefine((value, context) => {
+  const valid = value.mode === "needs_input"
+    ? !value.sufficient && value.question !== null && value.missingEvidence.length > 0 && value.recommendation === null
+    : value.sufficient && value.question === null && value.missingEvidence.length === 0 && (value.mode === "complete" ? value.recommendation === null : value.recommendation !== null);
+  if (!valid) context.addIssue({ code: "custom", message: "Chief output fields must match mode" });
+});
 
 export const MeetingTurnResponseSchema = z.discriminatedUnion("status", [
   z.object({

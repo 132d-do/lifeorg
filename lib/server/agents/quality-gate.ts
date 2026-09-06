@@ -18,7 +18,11 @@ export function gateRecommendation(candidate: unknown, records: EvidenceRecord[]
     if (parsed.data.forecast.evidenceThatChangesAdvice.length === 0) missing.add("change_evidence");
     const mutations = parsed.data.mutationPreview ?? [];
     const isReviewOnly = mutations.length > 0 && mutations.every((mutation) => mutation.type === "decision.reviewOutcome");
-    if (!isReviewOnly && !mutations.some((mutation) => mutation.type === "cycle.create")) missing.add("executable_cycle");
+    const link = parsed.data.existingCycle;
+    const existing = link && records.find((record) => record.type === "cycle" && record.id === link.recordId && record.updatedAt === link.updatedAt);
+    if (link && (!existing || mutations.some((mutation) => mutation.type === "cycle.create"))) missing.add("valid_existing_cycle");
+    if (!isReviewOnly && !existing && !mutations.some((mutation) => mutation.type === "cycle.create")) missing.add("executable_cycle");
+    if (records.some((record) => record.type === "cycle") && mutations.some((mutation) => mutation.type === "cycle.create")) missing.add("use_existing_cycle");
     const sentences = parsed.data.recommendation.split(/[。！？.!?]+/).filter((part) => part.trim().length > 0);
     if (sentences.length !== 1) missing.add("one_sentence_recommendation");
     if (missing.size === 0) return { status: "ready", recommendation: parsed.data };

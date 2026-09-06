@@ -12,6 +12,7 @@ const records = [
   { id: "goal:1", type: "goal", title: "论文", summary: "进展 50%", updatedAt: "2026-07-20" },
 ];
 const request = { clientRequestId: "create-claim", kind: "weekly", topic: "决定本周唯一结果", intake: { message: "精力有限" }, evidence: [{ type: "profile", id: "self" }, { type: "goal", id: "1" }] };
+const cycleFixture = { type: "cycle.create", commitment: "完成论文三段提纲", startLocalDate: "2026-07-20", reviewLocalDate: "2026-07-22", timeZone: "Asia/Shanghai", successCriterion: "三段含证据的提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围" };
 const reliableFields = {
   centralAssumption: "聚焦论文比新增并行项目更能解除阻塞",
   forecast: { observableOutcome: "到复查日形成可检查的论文提纲", confidencePercent: 70, evidenceThatChangesAdvice: ["导师要求立即切换优先级"] },
@@ -62,7 +63,7 @@ test("a turn can only be completed by the durable lease owner", async () => {
 test("ready persistence includes specialist contributions and full prior context", async () => {
   let received;
   const repository = new InMemoryMeetingRepository({ recordsByUser: { [user.userId]: records } });
-  const recommendation = { ...reliableFields, recommendation: "本周只完成论文讨论章节并推迟新增项目。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新增项目", nextAction: "明天写出三段提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成三段提纲", stopOrAdjustCondition: "两次专注后仍无提纲则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }] };
+  const recommendation = { ...reliableFields, recommendation: "本周只完成论文讨论章节并推迟新增项目。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新增项目", nextAction: "明天写出三段提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成三段提纲", stopOrAdjustCondition: "两次专注后仍无提纲则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }, cycleFixture] };
   const contributions = ["strategyArchitectAgent", "operationsOfficerAgent", "riskAuditorAgent"].map((role) => ({ role, conclusion: `${role} 结论`, evidenceIds: ["goal:1"], uncertainty: "未知", disagreements: [] }));
   const service = createMeetingService({ repository, deliberate: async (packet) => { received = packet; return { turn: { status: "ready", recommendation }, contributions }; } });
   const { meetingId } = await service.create(user, request);
@@ -111,7 +112,7 @@ test("D1 evidence summaries preserve readable facts for Agent grounding", () => 
 
 test("meeting approval is exactly once across different client keys", async () => {
   const repository = new InMemoryMeetingRepository({ recordsByUser: { [user.userId]: records }, goalsByUser: { [user.userId]: [{ id: 1, progress: 10 }] } });
-  const recommendation = { ...reliableFields, recommendation: "本周只推进论文并推迟新增项目。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新增项目", nextAction: "明天写三段提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成三段提纲", stopOrAdjustCondition: "两次专注后仍无提纲则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }] };
+  const recommendation = { ...reliableFields, recommendation: "本周只推进论文并推迟新增项目。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新增项目", nextAction: "明天写三段提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成三段提纲", stopOrAdjustCondition: "两次专注后仍无提纲则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }, cycleFixture] };
   const service = createMeetingService({ repository, deliberate: async () => ({ status: "ready", recommendation }) });
   const { meetingId } = await service.create(user, { ...request, clientRequestId: "exactly-once" });
   await service.turn(user, meetingId, { message: "材料完整", clientTurnId: "exactly-once-turn" });
@@ -161,7 +162,7 @@ test("an edit that read stale state cannot overwrite a completed approval", asyn
     }
   }
   const repository = new DelayedEditRepository({ recordsByUser: { [user.userId]: records }, goalsByUser: { [user.userId]: [{ id: 1, progress: 10 }] } });
-  const recommendation = { ...reliableFields, recommendation: "本周只推进论文。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新项目", nextAction: "明天写提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }] };
+  const recommendation = { ...reliableFields, recommendation: "本周只推进论文。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新项目", nextAction: "明天写提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }, cycleFixture] };
   const service = createMeetingService({ repository, deliberate: async () => ({ status: "ready", recommendation }) });
   const { meetingId } = await service.create(user, { ...request, clientRequestId: "stale-decision" });
   await service.turn(user, meetingId, { message: "材料完整", clientTurnId: "stale-decision-turn" });
@@ -185,7 +186,7 @@ test("approval cannot apply domain mutations after a concurrent rejection wins",
     }
   }
   const repository = new DelayedRejectRepository({ recordsByUser: { [user.userId]: records }, goalsByUser: { [user.userId]: [{ id: 1, progress: 10 }] } });
-  const recommendation = { ...reliableFields, recommendation: "本周只推进论文。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新项目", nextAction: "明天写提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }] };
+  const recommendation = { ...reliableFields, recommendation: "本周只推进论文。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新项目", nextAction: "明天写提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }, cycleFixture] };
   const service = createMeetingService({ repository, deliberate: async () => ({ status: "ready", recommendation }) });
   const { meetingId } = await service.create(user, { ...request, clientRequestId: "reject-approve-race" });
   await service.turn(user, meetingId, { message: "材料完整", clientTurnId: "reject-approve-turn" });
@@ -206,7 +207,7 @@ test("decision service claims the lease before reloading authoritative room stat
     async getMeeting(...args) { events.push("reload"); return super.getMeeting(...args); }
   }
   const repository = new TraceRepository({ recordsByUser: { [user.userId]: records } });
-  const recommendation = { ...reliableFields, recommendation: "本周只推进论文。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新项目", nextAction: "明天写提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [] };
+  const recommendation = { ...reliableFields, recommendation: "本周只推进论文。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新项目", nextAction: "明天写提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [cycleFixture] };
   const service = createMeetingService({ repository, deliberate: async () => ({ status: "ready", recommendation }) });
   const { meetingId } = await service.create(user, { ...request, clientRequestId: "claim-before-reload" });
   await service.turn(user, meetingId, { message: "材料完整", clientTurnId: "claim-before-reload-turn" });
@@ -217,7 +218,7 @@ test("decision service claims the lease before reloading authoritative room stat
 
 test("persisted message order and model provenance survive a ready turn", async () => {
   const repository = new InMemoryMeetingRepository({ recordsByUser: { [user.userId]: records } });
-  const recommendation = { ...reliableFields, recommendation: "本周只推进论文。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新项目", nextAction: "明天写提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }] };
+  const recommendation = { ...reliableFields, recommendation: "本周只推进论文。", evidence: [{ recordId: "profile:self", claim: "章程要求可持续" }, { recordId: "goal:1", claim: "论文是当前目标" }], deferredAlternative: "推迟新项目", nextAction: "明天写提纲", nextActionWindowHours: 24, deadlineOrReviewAt: "2026-07-22", successCriterion: "完成提纲", stopOrAdjustCondition: "两次专注无进展则缩小范围", confidence: "medium", unknowns: [], disagreements: [], mutationPreview: [{ type: "goal.update", goalId: 1, progress: 60 }, cycleFixture] };
   const contributions = ["strategyArchitectAgent", "operationsOfficerAgent", "riskAuditorAgent"].map((role) => ({ role, conclusion: `${role} 结论`, evidenceIds: ["goal:1"], uncertainty: "未知", disagreements: [] }));
   const service = createMeetingService({ repository, deliberate: async () => ({ turn: { status: "ready", recommendation }, contributions }) });
   const { meetingId } = await service.create(user, { ...request, clientRequestId: "message-provenance" });
